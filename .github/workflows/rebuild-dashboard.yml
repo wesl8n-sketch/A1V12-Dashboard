@@ -1,15 +1,12 @@
 name: Rebuild A1V12 Dashboard
 
 # Runs automatically on a schedule, and lets you trigger it by hand from the
-# Actions tab (handy right after you fix the FBTC_HIST -> FBTC mapping).
+# Actions tab.
 on:
   schedule:
-    # 21:30 UTC = ~4:30pm ET, after US markets close and Yahoo data settles.
-    # Cron is UTC only; adjust for DST manually or use a range if it matters to you.
     - cron: "30 21 * * 1-5"
   workflow_dispatch: {}
 
-# Least-privilege token: only allow pushing back to this repo.
 permissions:
   contents: write
 
@@ -86,7 +83,6 @@ jobs:
           done
           echo "::error::Failed to push after 5 attempts."
           exit 1
-          fi
 
       - name: Upload dashboard as build artifact
         uses: actions/upload-artifact@v4
@@ -134,7 +130,5 @@ jobs:
             Deploy job:  ${{ needs.deploy.result }}
             Run log:     ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-            If the rebuild job failed, check that step's log for the specific
-            Check that came back FAIL. No data or dashboard changes were
-            committed for this run; the site still reflects the last
-            successful build.
+            No data or dashboard changes were committed for this run; the
+            site still reflects the last successful build.
