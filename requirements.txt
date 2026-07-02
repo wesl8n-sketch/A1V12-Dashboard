@@ -1,0 +1,6 @@
+# Adjust to match whatever your actual build_dashboard.py pipeline uses.
+# yfinance is the likely Yahoo Finance client given Production_Rules.csv
+# specifies "Price Source: Yahoo Finance / Adjusted Close".
+yfinance>=0.2.40
+pandas>=2.2
+numpy>=1.26
