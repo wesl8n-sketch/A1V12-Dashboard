@@ -61,7 +61,7 @@ jobs:
           print(f"Audit passed: {len(rows)} checks OK")
           EOF
 
-      - - name: Commit refreshed data + dashboard
+      - name: Commit refreshed data + dashboard
         run: |
           git config user.name "dashboard-bot"
           git config user.email "actions@users.noreply.github.com"
