@@ -68,10 +68,19 @@ jobs:
           git add Data Dashboard Audit
           if git diff --cached --quiet; then
             echo "No changes to commit."
-          else
-            git commit -m "Automated rebuild: $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git pull --rebase origin main
-            git push
+            exit 0
+          fi
+          git commit -m "Automated rebuild: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push; then
+              echo "Pushed successfully on attempt $attempt."
+              exit 0
+            fi
+            echo "Push attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::Failed to push after 5 attempts."
+          exit 1
           fi
 
       - name: Upload dashboard as build artifact
