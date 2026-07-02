@@ -1,0 +1,125 @@
+name: Rebuild A1V12 Dashboard
+
+# Runs automatically on a schedule, and lets you trigger it by hand from the
+# Actions tab (handy right after you fix the FBTC_HIST -> FBTC mapping).
+on:
+  schedule:
+    # 21:30 UTC = ~4:30pm ET, after US markets close and Yahoo data settles.
+    # Cron is UTC only; adjust for DST manually or use a range if it matters to you.
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch: {}
+
+# Least-privilege token: only allow pushing back to this repo.
+permissions:
+  contents: write
+
+concurrency:
+  group: rebuild-dashboard
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run data pipeline + rebuild dashboard
+        run: |
+          python Scripts/a1v12_yahoo_v3_2.py
+
+      - name: Fail the build if the production audit failed
+        run: |
+          python - <<'EOF'
+          import csv, sys
+          path = "Audit/Production_Audit.csv"
+          try:
+              with open(path) as f:
+                  rows = list(csv.DictReader(f))
+          except FileNotFoundError:
+              print(f"::error::{path} not found -- build did not run correctly")
+              sys.exit(1)
+          fails = [r for r in rows if r.get("Status") == "FAIL"]
+          if fails:
+              for r in fails:
+                  print(f"::error::Audit FAIL: {r.get('Check')} -- {r.get('Detail')}")
+              sys.exit(1)
+          print(f"Audit passed: {len(rows)} checks OK")
+          EOF
+
+      - name: Commit refreshed data + dashboard
+        run: |
+          git config user.name "dashboard-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add Data Dashboard Audit
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Automated rebuild: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
+
+      - name: Upload dashboard as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-html
+          path: Dashboard/A1V12_Yahoo_Production_v3_2_Dashboard.html
+          retention-days: 14
+
+  deploy:
+    needs: rebuild
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repo (post-rebuild)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy Dashboard --project-name=a1v12-dashboard
+
+  notify-failure:
+    needs: [rebuild, deploy]
+    if: always() && (needs.rebuild.result == 'failure' || needs.deploy.result == 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          from: A1V12 Dashboard Bot
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          subject: "[FAILED] A1V12 dashboard rebuild -- ${{ github.repository }}"
+          body: |
+            The A1V12 dashboard rebuild did not complete successfully.
+
+            Rebuild job: ${{ needs.rebuild.result }}
+            Deploy job:  ${{ needs.deploy.result }}
+            Run log:     ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            If the rebuild job failed, check that step's log for the specific
+            Check that came back FAIL. No data or dashboard changes were
+            committed for this run; the site still reflects the last
+            successful build.
