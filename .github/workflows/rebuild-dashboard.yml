@@ -61,23 +61,28 @@ jobs:
           print(f"Audit passed: {len(rows)} checks OK")
           EOF
 
-      - name: Commit refreshed data + dashboard
+      - - name: Commit refreshed data + dashboard
         run: |
           git config user.name "dashboard-bot"
           git config user.email "actions@users.noreply.github.com"
+          git fetch origin main
+          git reset --mixed origin/main
           git add Data Dashboard Audit
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
-          git commit -m "Automated rebuild: $(date -u +'%Y-%m-%d %H:%M UTC')"
           for attempt in 1 2 3 4 5; do
-            if git pull --rebase origin main && git push; then
+            git commit -m "Automated rebuild: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            if git push; then
               echo "Pushed successfully on attempt $attempt."
               exit 0
             fi
             echo "Push attempt $attempt failed, retrying in 10s..."
             sleep 10
+            git fetch origin main
+            git reset --mixed origin/main
+            git add Data Dashboard Audit
           done
           echo "::error::Failed to push after 5 attempts."
           exit 1
