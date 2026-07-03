@@ -1,7 +1,9 @@
 {
   "name": "a1v12-dashboard",
   "compatibility_date": "2026-01-01",
+  "main": "worker.js",
   "assets": {
-    "directory": "Dashboard"
+    "directory": "Dashboard",
+    "binding": "ASSETS"
   }
 }
