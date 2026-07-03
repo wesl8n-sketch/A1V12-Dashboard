@@ -5,7 +5,7 @@ Allocation rows,PASS,82
 Static MWM models,PASS,"MWM Aggressive, MWM Balanced, MWM Conservative, MWM Growth, MWM Growth Plus, MWM Moderate, MWM Ultra Aggressive"
 Tactical models,PASS,"Tactical Aggressive, Tactical Balanced, Tactical Conservative, Tactical Growth, Tactical Growth Plus, Tactical Moderate, Tactical Ultra Aggressive"
 Allocation assets resolve to live data,PASS,All Production_Assets have OK price data
-Composite rows,PASS,3901
+Composite rows,PASS,3902
 Signal rows,PASS,3897
 Trade ledger rows,PASS,105
 Portfolio values rows,PASS,3897
