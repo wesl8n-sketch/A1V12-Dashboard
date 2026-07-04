@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A1V12 Yahoo Production v3.2
+A1V12 Yahoo Production v3.2 (+ Allocation tab)
 
 Complete integrated package.
 
@@ -15,6 +15,12 @@ v3.2 includes:
     >2Y and <8Y = Weekly
     >=8Y or SI = Monthly
 - Drawdown computed from daily series first, then downsampled
+
+Update (this revision):
+- Added an "Allocation" tab: per-model pie chart (with on-slice percentage
+  labels) + legend + weight table, built from the same Allocation_Config_
+  Normalized.csv payload already embedded in the dashboard. No new data
+  files or external chart libraries required.
 """
 
 from pathlib import Path
@@ -448,7 +454,7 @@ DASHBOARD_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name
 body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width:1680px;margin:auto;padding:18px}h1{color:#17365d;margin:0}.sub{color:#64748b;font-size:13px}.card{background:white;border:1px solid #d7deea;border-radius:13px;padding:14px;margin:12px 0}.tabs,.controls,.checks{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:8px 11px;font-weight:700;cursor:pointer}button.active{background:#17365d;color:white}.tab{display:none}.tab.active{display:block}.grid{display:grid;gap:12px}.grid2{grid-template-columns:2fr 1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.kpi{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}.label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800}.big{font-size:22px;font-weight:900}.chartbox{height:430px;width:100%;border:1px solid #eef2f7;border-radius:10px;background:white}.chartbox.short{height:300px}canvas{width:100%;height:100%;display:block}.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;margin-top:10px}.sw{width:18px;height:4px;border-radius:2px;display:inline-block;margin-right:5px}.scroll{max-height:560px;overflow:auto;border:1px solid #eef2f7;border-radius:10px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #e5e7eb;padding:7px;text-align:right;white-space:nowrap}th{background:#f3f4f6;position:sticky;top:0;cursor:pointer;z-index:2}td:first-child,th:first-child{text-align:left}.freeze1{position:sticky;left:0;background:white;z-index:1;min-width:120px}.freeze2{position:sticky;left:120px;background:white;z-index:1;min-width:90px}.freeze3{position:sticky;left:210px;background:white;z-index:1;min-width:180px}.good{color:#15803d;font-weight:800}.bad{color:#b91c1c;font-weight:800}.pass{color:#15803d;font-weight:900}.fail{color:#b91c1c;font-weight:900}.warn{color:#a16207;font-weight:900}.note{font-size:12px;color:#64748b}.pill{display:inline-block;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;font-weight:700}.state-growth{background:#ecfdf5}.state-value{background:#eff6ff}.state-jive{background:#fefce8}.tradebox{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tradeitem{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
 </style></head><body><div class="wrap">
 <h1>A1V12 Yahoo Production v3.2</h1><div class="sub">Configuration-driven models plus chart audit. Daily calculations retained; chart downsampling is display-only.</div>
-<div class="tabs"><button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button><button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button><button class="tabbtn" onclick="showTab(event,'mwm')">MWM Static</button><button class="tabbtn" onclick="showTab(event,'tacticalmodels')">Tactical Models</button><button class="tabbtn" onclick="showTab(event,'signals')">Signals</button><button class="tabbtn" onclick="showTab(event,'holding')">Holding Analytics</button><button class="tabbtn" onclick="showTab(event,'trade')">Trade Log</button><button class="tabbtn" onclick="showTab(event,'chartaudit')">Chart Audit</button><button class="tabbtn" onclick="showTab(event,'audit')">Audit</button><button class="tabbtn" onclick="showTab(event,'config')">Config</button></div>
+<div class="tabs"><button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button><button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button><button class="tabbtn" onclick="showTab(event,'mwm')">MWM Static</button><button class="tabbtn" onclick="showTab(event,'tacticalmodels')">Tactical Models</button><button class="tabbtn" onclick="showTab(event,'signals')">Signals</button><button class="tabbtn" onclick="showTab(event,'holding')">Holding Analytics</button><button class="tabbtn" onclick="showTab(event,'trade')">Trade Log</button><button class="tabbtn" onclick="showTab(event,'chartaudit')">Chart Audit</button><button class="tabbtn" onclick="showTab(event,'audit')">Audit</button><button class="tabbtn" onclick="showTab(event,'allocation')">Allocation</button><button class="tabbtn" onclick="showTab(event,'config')">Config</button></div>
 <div class="controls"><b class="note">Period</b><span id="periodButtons"></span><span id="freqPill" class="pill">Display: Daily</span><span class="pill">Metrics use daily rows</span><span class="pill">Drawdown before downsample</span></div>
 <section id="overview" class="tab active"><div class="grid kpis" id="kpiBox"></div><div class="grid grid2"><div class="card"><h2>Primary Comparison</h2><div class="controls"><button onclick="preset('core')">Core</button><button onclick="preset('static')">MWM Static</button><button onclick="preset('tacticalmodels')">Tactical Models</button><button onclick="preset('all')">All</button></div><div id="overviewChecks" class="checks"></div><div class="chartbox"><canvas id="overviewChart"></canvas></div><div id="overviewLegend" class="legend"></div></div><div class="card"><h2>Current State & Latest Trade</h2><div id="stateBox"></div><div id="latestTrade"></div></div></div><div class="card"><h2>Sortable Metrics</h2><div class="scroll"><table id="metricsTable"></table></div></div></section>
 <section id="tactical" class="tab"><div class="card"><h2>Tactical Sleeve Research</h2><div class="chartbox"><canvas id="tacticalChart"></canvas></div><div id="tacticalLegend" class="legend"></div></div><div class="card"><h2>Tactical Drawdown</h2><div class="chartbox short"><canvas id="tacticalDD"></canvas></div><div id="tacticalDDLegend" class="legend"></div><div class="note">Daily drawdown is computed before chart downsampling.</div></div><div class="card"><h2>Tactical Metrics</h2><div class="scroll"><table id="tacticalMetrics"></table></div></div></section>
@@ -459,6 +465,21 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 <section id="trade" class="tab"><div class="card"><h2>Trade Ledger</h2><div id="latestTrade2"></div><div class="scroll"><table id="tradeTable"></table></div></div></section>
 <section id="chartaudit" class="tab"><div class="card"><h2>Chart Audit</h2><div class="scroll"><table id="chartAuditTable"></table></div></div><div class="card"><h2>Chart Rules</h2><table><tr><th>Window</th><th>Display frequency</th><th>Calculation basis</th></tr><tr><td>YTD, 1Y, 2Y</td><td>Daily</td><td>Full daily values</td></tr><tr><td>&gt;2Y and &lt;8Y</td><td>Weekly, last trading observation of week</td><td>Full daily values</td></tr><tr><td>≥8Y or SI</td><td>Monthly, last trading observation of month</td><td>Full daily values</td></tr><tr><td>Drawdown</td><td>Downsample after drawdown is computed</td><td>Daily running peak first</td></tr></table></div></section>
 <section id="audit" class="tab"><div class="card"><h2>Metric Window Audit</h2><div id="windowAudit"></div><div class="scroll"><table id="windowRows"></table></div></div><div class="card"><h2>Production Audit</h2><div class="scroll"><table id="prodAuditTable"></table></div></div><div class="card"><h2>Data Audit</h2><div class="scroll"><table id="auditTable"></table></div></div></section>
+<section id="allocation" class="tab">
+<div class="card">
+<h2>Model Allocation</h2>
+<div class="controls">
+  <b class="note">Model</b><span id="allocModelButtons"></span>
+</div>
+<div class="grid grid2">
+  <div>
+    <div class="chartbox"><canvas id="allocPie"></canvas></div>
+    <div id="allocLegend" class="legend"></div>
+  </div>
+  <div class="scroll"><table id="allocTable"></table></div>
+</div>
+</div>
+</section>
 <section id="config" class="tab"><div class="card"><h2>Backfill Scale Audit</h2><div class="note">Backfilled series are ratio-scaled to prevent artificial jumps at live/backfill transition dates.</div><div class="scroll"><table id="backfillAuditTable"></table></div></div><div class="card"><h2>Static to Tactical Model Map</h2><div class="scroll"><table id="modelMapTable"></table></div></div><div class="card"><h2>Normalized Allocation Config</h2><div class="scroll"><table id="allocationTable"></table></div></div></section>
 </div><script>
 const EMBEDDED=__PAYLOAD__;
@@ -485,7 +506,7 @@ function dailyDrawdown(d,c){let z=d.map(r=>({Date:r.Date}));c.forEach(x=>{let p=
 function chartAuditRows(name,dDaily,cols,drawdown=false){let freq=displayFrequency(dDaily), disp=sampleDisplay(drawdown?dailyDrawdown(dDaily,cols):dDaily), rows=[];cols.forEach(x=>{let vals=dDaily.map(r=>r[x]).filter(isFinite), latestDaily=dDaily.length?dDaily.at(-1)[x]:null, latestPlot=disp.length?disp.at(-1)[x]:null;let miss=dDaily.length-vals.length;rows.push({Chart:name,Series:x,Frequency:freq,'Daily Rows':dDaily.length,'Plotted Rows':disp.length,'Missing Count':miss,'Latest Daily Date':dDaily.length?dDaily.at(-1).Date:'','Latest Plot Date':disp.length?disp.at(-1).Date:'','Latest Point Diff':(isFinite(latestDaily)&&isFinite(latestPlot))?latestPlot-latestDaily:null,Status:(miss===0 && (!isFinite(latestDaily)||Math.abs((latestPlot||0)-latestDaily)<1e-8))?'PASS':'WARN'})});return rows}
 function staticCols(){return cols(portfolio).filter(x=>x.startsWith('MWM '))}
 function tacticalModelCols(){return cols(portfolio).filter(x=>x.startsWith('Tactical '))}
-function showTab(e,id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.tabbtn').forEach(b=>b.classList.remove('active'));e.target.classList.add('active');setTimeout(render,80)}
+function showTab(e,id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.tabbtn').forEach(b=>b.classList.remove('active'));e.target.classList.add('active');setTimeout(render,80);setTimeout(renderAllocation,80)}
 function setPeriod(p){period=p;sortState={};document.querySelectorAll('#periodButtons button').forEach(b=>b.classList.toggle('active',b.textContent==p));render()}
 function preset(p){let all=cols(portfolio);visible=p=='core'?['A1V12 Tactical Sleeve','VOO Benchmark']:p=='static'?staticCols():p=='tacticalmodels'?tacticalModelCols():all;document.getElementById('overviewChecks').innerHTML=all.map(x=>`<label><input type=checkbox ${visible.includes(x)?'checked':''} onchange="tog('${x}',this.checked)"> ${x}</label>`).join('');render()}
 function tog(x,on){if(on&&!visible.includes(x))visible.push(x);if(!on)visible=visible.filter(y=>y!=x);render()}
@@ -493,8 +514,68 @@ function recentSignals(){return [...signals].reverse().slice(0,60).map((r,i)=>({
 function render(){let d=cut(portfolio),rb=rebase(d,visible),m=metric(rb,visible);document.getElementById('freqPill').innerHTML='Display: '+displayFrequency(d);draw('overviewChart',rb,visible,'overviewLegend');drawTable('metricsTable',m);document.getElementById('kpiBox').innerHTML=m.slice(0,4).map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span></div></div>`).join('');document.getElementById('windowAudit').innerHTML=d.length?`<b>${period}</b><br>Start: ${d[0].Date}<br>End: ${d.at(-1).Date}<br>Daily rows: ${d.length}<br>Display frequency: ${displayFrequency(d)}<br>Display rows: ${sampleDisplay(d).length}`:'No data';drawTable('windowRows',m);let tc=cols(tactical).filter(x=>['A1V12','A1V12-XMGV','A1V12-XJIVE','VOO Benchmark'].includes(x));let td=rebase(cut(tactical),tc),tm=metric(td,tc);draw('tacticalChart',td,tc,'tacticalLegend');draw('tacticalDD',dailyDrawdown(td,tc),tc,'tacticalDDLegend',true);drawTable('tacticalMetrics',tm);let sd=rebase(cut(portfolio),staticCols());draw('mwmChart',sd,staticCols(),'mwmLegend');drawTable('mwmMetrics',metric(sd,staticCols()));let tmd=rebase(cut(portfolio),tacticalModelCols());draw('tacticalModelsChart',tmd,tacticalModelCols(),'tacticalModelsLegend');drawTable('tacticalModelsMetrics',metric(tmd,tacticalModelCols()));state();drawTable('signalTable',recentSignals(),true);let auditRows=[...chartAuditRows('Overview',rb,visible,false),...chartAuditRows('Tactical Growth',td,tc,false),...chartAuditRows('Tactical Drawdown',td,tc,true),...chartAuditRows('MWM Static',sd,staticCols(),false),...chartAuditRows('Tactical Models',tmd,tacticalModelCols(),false)];drawTable('chartAuditTable',auditRows)}
 function state(){let s=signals.at(-1)||{},tr=trades.at(-1)||{};let stateHtml=`<div class=tradebox><div class=tradeitem><div class=label>Current State</div><div class=big>${s.State||'N/A'}</div></div><div class=tradeitem><div class=label>Current Holding</div><div class=big>${s.EffectiveHolding||'N/A'}</div></div><div class=tradeitem><div class=label>Latest Signal Date</div><div class=big>${s.Date||'N/A'}</div></div><div class=tradeitem><div class=label>MGK/MGV</div><div class=big>${ratio(s.MGK_MGV)}</div></div></div>`;let tradeHtml=`<div class=tradebox style="margin-top:10px"><div class=tradeitem><div class=label>Trigger Date</div><div class=big>${tr.Trigger_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Trade Date</div><div class=big>${tr.Trade_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Latest Trade</div><div class=big>${tr.From||''} → ${tr.To||''}</div></div><div class=tradeitem><div class=label>Rule</div><div class=note>${tr.Rule||'N/A'}</div></div></div>`;document.getElementById('stateBox').innerHTML=stateHtml;document.getElementById('latestTrade').innerHTML=tradeHtml;document.getElementById('latestTrade2').innerHTML=tradeHtml}
 function staticTables(){drawTable('tradeTable',trades.slice().reverse());drawTable('holdingSummary',holdsum);drawTable('holdingPeriods',holdperiods.slice().reverse());drawTable('auditTable',audit);drawTable('prodAuditTable',prodaudit);drawTable('modelMapTable',modelmap);drawTable('allocationTable',alloc);drawTable('backfillAuditTable',backfillaudit)}
-function init(){document.getElementById('periodButtons').innerHTML=periods.map(p=>`<button onclick="setPeriod('${p}')" class="${p==period?'active':''}">${p}</button>`).join('');preset('core');staticTables();setTimeout(render,120)}
-window.addEventListener('resize',()=>setTimeout(render,120));init();
+
+/* --- Allocation tab: pie chart + labels + legend + table --- */
+let allocModel = null;
+function allocModels(){return [...new Set(alloc.map(r=>r.Model))]}
+function allocForModel(m){
+  let rows = alloc.filter(r=>r.Model===m);
+  let byAsset = {};
+  rows.forEach(r=>{byAsset[r.Production_Asset]=(byAsset[r.Production_Asset]||0)+Number(r.Weight)});
+  return Object.entries(byAsset).map(([Asset,Weight])=>({Asset,Weight})).sort((a,b)=>b.Weight-a.Weight);
+}
+function setAllocModel(m){
+  allocModel=m;
+  document.querySelectorAll('#allocModelButtons button').forEach(b=>b.classList.toggle('active',b.textContent===m));
+  renderAllocation();
+}
+function drawPie(id,rows){
+  let cv=document.getElementById(id); if(!cv) return;
+  let box=cv.parentElement, wCss=Math.max(300,box.clientWidth||400), hCss=Math.max(260,box.clientHeight||400), pr=window.devicePixelRatio||1;
+  cv.width=wCss*pr; cv.height=hCss*pr;
+  let ctx=cv.getContext('2d'); ctx.setTransform(pr,0,0,pr,0,0);
+  ctx.clearRect(0,0,wCss,hCss);
+  ctx.font='11px Arial';
+  if(!rows.length){ctx.fillText('No allocation data',30,40); return}
+  let total=rows.reduce((a,r)=>a+r.Weight,0);
+  if(!total){ctx.fillText('Allocation weights sum to zero',30,40); return}
+  let cx=wCss/2, cy=hCss/2, r=Math.min(wCss,hCss)/2-20, start=-Math.PI/2;
+  rows.forEach((row,i)=>{
+    let slice=(row.Weight/total)*2*Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,r,start,start+slice);
+    ctx.closePath();
+    ctx.fillStyle=colors[i%colors.length];
+    ctx.fill();
+    ctx.strokeStyle='#ffffff';
+    ctx.lineWidth=1.5;
+    ctx.stroke();
+    if(slice>0.14){
+      let mid=start+slice/2;
+      let lx=cx+Math.cos(mid)*r*0.65, ly=cy+Math.sin(mid)*r*0.65;
+      ctx.fillStyle='#ffffff';
+      ctx.font='bold 12px Arial';
+      ctx.textAlign='center';
+      ctx.fillText(pct(row.Weight/total),lx,ly+4);
+      ctx.font='11px Arial';
+    }
+    start+=slice;
+  });
+  ctx.textAlign='left';
+}
+function renderAllocation(){
+  if(!allocModel){ if(allocModels().length){allocModel=allocModels()[0]} else {return} }
+  let rows=allocForModel(allocModel);
+  let total=rows.reduce((a,r)=>a+r.Weight,0)||1;
+  drawPie('allocPie',rows);
+  let el=document.getElementById('allocLegend');
+  if(el)el.innerHTML=rows.map((r,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${r.Asset} (${pct(r.Weight/total)})</span>`).join('');
+  drawTable('allocTable',rows.map(r=>({Asset:r.Asset,Weight:r.Weight})));
+}
+
+function init(){document.getElementById('periodButtons').innerHTML=periods.map(p=>`<button onclick="setPeriod('${p}')" class="${p==period?'active':''}">${p}</button>`).join('');preset('core');staticTables();document.getElementById('allocModelButtons').innerHTML=allocModels().map(m=>`<button onclick="setAllocModel('${m}')">${m}</button>`).join('');if(allocModels().length)setAllocModel(allocModels()[0]);setTimeout(render,120);setTimeout(renderAllocation,120)}
+window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation()},120));init();
 </script></body></html>"""
 
 def main():
