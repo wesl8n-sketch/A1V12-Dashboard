@@ -116,7 +116,7 @@ TACTICAL_REPLACEMENT_CANDIDATES = {"MGK", "XLG", "VOO"}
 # it, turning a +0.41% MGK holding period into -2.65%. Scoping the cooldown
 # to Value-mode only avoids that side effect.) Set to 0 to fully restore
 # the original, uncooled behavior for comparison.
-MIN_HOLD_DAYS = 10
+MIN_HOLD_DAYS = 7
 
 def ensure(pkg):
     if importlib.util.find_spec(pkg) is None:
