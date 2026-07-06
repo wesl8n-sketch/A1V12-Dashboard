@@ -4,11 +4,11 @@ Allocation file,PASS,Config/MWM_Allocations.csv
 Allocation rows,PASS,82
 Static MWM models,PASS,"MWM Aggressive, MWM Balanced, MWM Conservative, MWM Growth, MWM Growth Plus, MWM Moderate, MWM Ultra Aggressive"
 Tactical models,PASS,"Tactical Aggressive, Tactical Balanced, Tactical Conservative, Tactical Growth, Tactical Growth Plus, Tactical Moderate, Tactical Ultra Aggressive"
-Minimum holding cooldown,PASS,15 trading days between MGV<->JIVE switches within Value mode (Growth<->Value transitions uncooled)
+Minimum holding cooldown,PASS,9 trading days between MGV<->JIVE switches within Value mode (Growth<->Value transitions uncooled)
 Allocation assets resolve to live data,PASS,All Production_Assets have OK price data
 Composite rows,PASS,3902
 Signal rows,PASS,3897
-Trade ledger rows,PASS,69
+Trade ledger rows,PASS,71
 Portfolio values rows,PASS,3897
 Latest signal date,PASS,2026-07-02 00:00:00
 Latest portfolio date,PASS,2026-07-02 00:00:00
