@@ -68,7 +68,7 @@ START_DATE = "2011-01-01"
 BASE_VALUE = 100000.0
 
 CORE_ASSETS = ["MGK","MGV","JIVE","VOO","BIL","VEU","AVUV","JPIE","JBND","FIWDX","FIKQX","FBTC","XLG","IMCB","XLF","XLV","SPHB","MTUM","PIMIX"]
-RESEARCH_ASSETS = ["EFV","DFSVX","JMSIX","WOBDX","FSRIX","FGBPX","XLRE","DXY","VIX","NERYX","VFINX","JMSFX"]
+RESEARCH_ASSETS = ["EFV","DFSVX","JMSIX","WOBDX","FSRIX","FGBPX","XLRE","DXY","VIX","NERYX","VFINX","JMSFX","FRDM"]
 YMAP = {"DXY":"DX-Y.NYB", "VIX":"^VIX"}
 
 BACKFILLS = {
@@ -116,7 +116,7 @@ TACTICAL_REPLACEMENT_CANDIDATES = {"MGK", "XLG", "VOO"}
 # it, turning a +0.41% MGK holding period into -2.65%. Scoping the cooldown
 # to Value-mode only avoids that side effect.) Set to 0 to fully restore
 # the original, uncooled behavior for comparison.
-MIN_HOLD_DAYS = 5
+MIN_HOLD_DAYS = 10
 
 def ensure(pkg):
     if importlib.util.find_spec(pkg) is None:
