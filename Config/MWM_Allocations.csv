@@ -1,6 +1,6 @@
 Model,Asset,Weight
 MWM Growth,AVUV,0.0552
-MWM Growth,FBTC_HIST,0.04
+MWM Growth,FBTC,0.04
 MWM Growth,FIKQX,0.0337416799999999
 MWM Growth,FIWDX,0.04399515
 MWM Growth,IMCB,0.04832
@@ -13,7 +13,7 @@ MWM Growth,XLF,0.01744
 MWM Growth,XLG,0.2319999999999999
 MWM Growth,XLV,0.0270399999999999
 MWM Aggressive,AVUV,0.0621
-MWM Aggressive,FBTC_HIST,0.045
+MWM Aggressive,FBTC,0.045
 MWM Aggressive,FIKQX,0.0168708399999999
 MWM Aggressive,FIWDX,0.021997575
 MWM Aggressive,IMCB,0.05436
@@ -26,14 +26,14 @@ MWM Aggressive,XLF,0.01962
 MWM Aggressive,XLG,0.261
 MWM Aggressive,XLV,0.03042
 MWM Ultra Aggressive,AVUV,0.119
-MWM Ultra Aggressive,FBTC_HIST,0.05
+MWM Ultra Aggressive,FBTC,0.05
 MWM Ultra Aggressive,IMCB,0.0598
 MWM Ultra Aggressive,VEU,0.1476
 MWM Ultra Aggressive,VOO,0.07
 MWM Ultra Aggressive,XLG,0.5046
 MWM Ultra Aggressive,XLV,0.049
 MWM Growth Plus,AVUV,0.05865
-MWM Growth Plus,FBTC_HIST,0.0425
+MWM Growth Plus,FBTC,0.0425
 MWM Growth Plus,FIKQX,0.0253062599999999
 MWM Growth Plus,FIWDX,0.0329963625
 MWM Growth Plus,IMCB,0.05134
