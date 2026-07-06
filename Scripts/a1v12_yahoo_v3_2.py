@@ -34,6 +34,17 @@ Update (this revision):
   *drawdown* value (percentage), always producing a nonsensical diff and
   spurious WARN status. Both sides of the comparison now come from the
   same basis (the daily drawdown series) when auditing a drawdown chart.
+- Whipsaw test #1 (MIN_HOLD_DAYS cooldown): Holding_Periods.csv showed a
+  cluster of 9 holding changes across ~3 months (Aug-Oct 2024), including
+  three same-day round-trips returning exactly 0.00%, coinciding with the
+  Tactical Growth vs VOO underperformance window seen on the dashboard.
+  Added a configurable MIN_HOLD_DAYS constant (default 10 trading days)
+  that blocks ANY holding change -- Growth<->Value transitions and
+  MGV<->JIVE switches within Value -- until that many trading days have
+  passed since the prior switch. Set MIN_HOLD_DAYS = 0 to exactly restore
+  the original, uncooled behavior for side-by-side comparison. The
+  cooldown setting is also written to Audit/Production_Audit.csv as
+  "Minimum holding cooldown" for visibility on the dashboard's Audit tab.
 """
 
 from pathlib import Path
@@ -88,6 +99,15 @@ ASSET_ALIASES = {
 }
 
 TACTICAL_REPLACEMENT_CANDIDATES = {"MGK", "XLG", "VOO"}
+
+# Test #1 for the whipsaw cluster identified in Holding_Periods.csv (e.g. the
+# 9 switches across MGV/JIVE/MGK in Aug-Oct 2024, including three same-day
+# round-trips with 0.00% return). MIN_HOLD_DAYS blocks ANY change to the
+# effective holding (Growth<->Value transitions AND MGV<->JIVE switches
+# within the Value state) until this many trading days have passed since the
+# last actual switch. Set to 0 to fully restore the original, uncooled
+# behavior for comparison.
+MIN_HOLD_DAYS = 10
 
 def ensure(pkg):
     if importlib.util.find_spec(pkg) is None:
@@ -302,23 +322,28 @@ def build_signals(comp):
 
     state, holding, pending = "Growth", "MGK", None
     trades, holdings = [], []
+    days_since_switch = MIN_HOLD_DAYS  # allow trading from the very first row
     for _, r in sig.iterrows():
         date = r["Date"]
         if pending is not None:
             ns, nh, trigger_date = pending
             if nh != holding:
-                trades.append([date, trigger_date, holding, nh, ns, "Next trading day after trigger"])
+                trades.append([date, trigger_date, holding, nh, ns, f"Next trading day after trigger (cooldown={MIN_HOLD_DAYS}d)"])
                 state, holding = ns, nh
+                days_since_switch = 0
             pending = None
         holdings.append([date, state, holding])
-        if state != "Growth" and r["Growth_Streak"] >= 3:
-            pending = ("Growth", "MGK", date)
-        elif state != "Value" and r["Value_Streak"] >= 3:
-            pending = ("Value", "JIVE" if bool(r["Use_JIVE"]) else "MGV", date)
-        elif state == "Value" and holding == "MGV" and bool(r["Use_JIVE"]):
-            pending = ("Value", "JIVE", date)
-        elif state == "Value" and holding == "JIVE" and not bool(r["Use_JIVE"]):
-            pending = ("Value", "MGV", date)
+        days_since_switch += 1
+        cooldown_clear = days_since_switch >= MIN_HOLD_DAYS
+        if cooldown_clear:
+            if state != "Growth" and r["Growth_Streak"] >= 3:
+                pending = ("Growth", "MGK", date)
+            elif state != "Value" and r["Value_Streak"] >= 3:
+                pending = ("Value", "JIVE" if bool(r["Use_JIVE"]) else "MGV", date)
+            elif state == "Value" and holding == "MGV" and bool(r["Use_JIVE"]):
+                pending = ("Value", "JIVE", date)
+            elif state == "Value" and holding == "JIVE" and not bool(r["Use_JIVE"]):
+                pending = ("Value", "MGV", date)
 
     h = pd.DataFrame(holdings, columns=["Date","State","EffectiveHolding"])
     sig = sig.merge(h, on="Date", how="left")
@@ -415,6 +440,7 @@ def run_audit(alloc_df, static_models, tactical_models, comp, sig, trades, tv, p
     add("Allocation rows", "PASS", str(len(alloc_df)))
     add("Static MWM models", "PASS", ", ".join(static_models.keys()))
     add("Tactical models", "PASS", ", ".join(tactical_models.keys()))
+    add("Minimum holding cooldown", "PASS" if MIN_HOLD_DAYS >= 0 else "FAIL", f"{MIN_HOLD_DAYS} trading days between any effective-holding switch")
 
     # FIX: every Production_Asset referenced by the allocation config must have
     # actually downloaded. This is what would have caught FBTC_HIST immediately
