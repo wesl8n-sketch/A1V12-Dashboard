@@ -16,11 +16,24 @@ v3.2 includes:
     >=8Y or SI = Monthly
 - Drawdown computed from daily series first, then downsampled
 
-Update (this revision):
+Update (previous revision):
 - Added an "Allocation" tab: per-model pie chart (with on-slice percentage
   labels) + legend + weight table, built from the same Allocation_Config_
   Normalized.csv payload already embedded in the dashboard. No new data
   files or external chart libraries required.
+
+Update (this revision):
+- True Sharpe ratio: "Sharpe" was previously CAGR / Volatility with no
+  risk-free adjustment. It is now (CAGR - Risk_Free_CAGR) / Volatility,
+  where Risk_Free_CAGR is computed from the BIL Buy Hold series already
+  embedded in the tactical data payload, matched to each metric's own date
+  window. Column relabeled "Sharpe (vs BIL)"; a visible Risk_Free_CAGR
+  column was added alongside it for auditability.
+- Chart Audit drawdown bug fix: drawdown-chart audit rows previously
+  compared the latest *portfolio value* (dollars) against the latest
+  *drawdown* value (percentage), always producing a nonsensical diff and
+  spurious WARN status. Both sides of the comparison now come from the
+  same basis (the daily drawdown series) when auditing a drawdown chart.
 """
 
 from pathlib import Path
@@ -488,6 +501,19 @@ const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date'
 let sortState={}, tableData={}, period='3Y', periods=['YTD','1Y','2Y','3Y','5Y','2018','2016','SI'], visible=[];
 function parseCSV(t){if(!t)return[];let L=t.trim().split(/\r?\n/);if(!L[0])return[];let H=L[0].split(',');return L.slice(1).filter(Boolean).map(l=>{let V=[],c='',q=false;for(let i=0;i<l.length;i++){let ch=l[i];if(ch=='"')q=!q;else if(ch==','&&!q){V.push(c);c=''}else c+=ch}V.push(c);let o={};H.forEach((h,i)=>{let v=V[i]??'',n=parseFloat(v);o[h]=(!STR.has(h)&&!isNaN(n)&&v.trim()!=='')?n:v});return o})}
 let tactical=parseCSV(EMBEDDED.tactical), portfolio=parseCSV(EMBEDDED.portfolio), signals=parseCSV(EMBEDDED.signals), trades=parseCSV(EMBEDDED.trades), holdsum=parseCSV(EMBEDDED.holdsum), holdperiods=parseCSV(EMBEDDED.holdperiods), audit=parseCSV(EMBEDDED.dataaudit), prodaudit=parseCSV(EMBEDDED.prodaudit), modelmap=parseCSV(EMBEDDED.modelmap), alloc=parseCSV(EMBEDDED.alloc), backfillaudit=parseCSV(EMBEDDED.backfillaudit);
+/* Risk-free series (BIL Buy Hold) used for true Sharpe ratio calculations. */
+let bilSeries=tactical.filter(r=>isFinite(r['BIL Buy Hold'])).map(r=>({Date:r.Date,BIL:r['BIL Buy Hold']}));
+function riskFreeCAGR(startDateStr,endDateStr){
+  if(!bilSeries.length)return 0;
+  let start=new Date(startDateStr), end=new Date(endDateStr);
+  let inRange=bilSeries.filter(r=>{let dt=new Date(r.Date); return dt>=start&&dt<=end});
+  if(inRange.length<2)return 0;
+  let yrs=(new Date(inRange.at(-1).Date)-new Date(inRange[0].Date))/86400000/365.25;
+  if(!(yrs>0))return 0;
+  let ratio=inRange.at(-1).BIL/inRange[0].BIL;
+  if(!(ratio>0))return 0;
+  return Math.pow(ratio,1/yrs)-1;
+}
 function money(v){return isFinite(v)?'$'+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}):''}function pct(v){return isFinite(v)?(v*100).toFixed(2)+'%':''}function ratio(v){return isFinite(v)?v.toFixed(2):''}function num(v,d=2){return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):v||''}
 function fmt(h,v){if(v==null||v==='')return ''; if(h.includes('Value')||h.includes('Price'))return money(v); if(h.includes('CAGR')||h.includes('Volatility')||h.includes('Drawdown')||h.includes('Return')||h.includes('Pct')||h.includes('Weight')||h.includes('Diff'))return pct(v); if(h.includes('Sharpe')||h.includes('Ratio'))return ratio(v); if(h.includes('Days'))return num(v,1); if(h.includes('Rows')||h.includes('Periods')||h.includes('Count'))return isFinite(v)?Math.round(v).toLocaleString():v; return isFinite(v)?num(v,2):v}
 function cls(h,v,row){let out='';if(h=='Status')out=v=='PASS'?'pass':(v=='FAIL'?'fail':'warn'); else if(isFinite(v)){if(h.includes('Drawdown')||h.includes('Worst'))out='bad'; else if(h.includes('CAGR')||h.includes('Sharpe')||h.includes('Return')||h.includes('Best'))out=v>=0?'good':'bad'} if(row&&row.__current)out+=' '+(row.EffectiveHolding=='JIVE'?'state-jive':row.State=='Value'?'state-value':'state-growth');return out}
@@ -500,10 +526,24 @@ function yearsIn(d){return d.length>1?(new Date(d.at(-1).Date)-new Date(d[0].Dat
 function displayFrequency(d){let yrs=period==='SI'?99:yearsIn(d); if(period==='YTD'||period==='1Y'||period==='2Y'||yrs<=2.05)return 'Daily'; if(yrs>=8)return 'Monthly'; return 'Weekly'}
 function sampleDisplay(d){let freq=displayFrequency(d); if(freq==='Daily')return d; let map=new Map(); d.forEach(r=>{let dt=new Date(r.Date); let key; if(freq==='Monthly'){key=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')} else {let x=new Date(dt); let day=x.getDay(); let diff=(day+6)%7; x.setDate(x.getDate()-diff); key=x.toISOString().slice(0,10)} map.set(key,r)}); return Array.from(map.values())}
 function rebase(d,c){if(!d.length)return[];return d.map(r=>{let o={Date:r.Date};c.forEach(x=>{let f=d.find(z=>isFinite(z[x])&&z[x]>0);o[x]=f?r[x]/f[x]*100000:null});return o})}
-function metric(d,c){let out=[];if(d.length<2)return out;c.forEach(x=>{let v=d.map(r=>r[x]).filter(isFinite);if(v.length<2)return;let days=(new Date(d[d.length-1].Date)-new Date(d[0].Date))/86400000,yrs=days/365.25,re=[];for(let i=1;i<v.length;i++)re.push(v[i]/v[i-1]-1);let avg=re.reduce((a,b)=>a+b,0)/re.length,sd=Math.sqrt(re.reduce((a,b)=>a+(b-avg)**2,0)/(re.length-1)),cagr=Math.pow(v.at(-1)/v[0],1/yrs)-1,vol=sd*Math.sqrt(252),peak=v[0],dd=0;v.forEach(z=>{peak=Math.max(peak,z);dd=Math.min(dd,z/peak-1)});out.push({Model:x,'Beginning Value':v[0],'Ending Value':v.at(-1),'Total Return':v.at(-1)/v[0]-1,CAGR:cagr,Volatility:vol,Sharpe:vol?cagr/vol:null,'Max Drawdown':dd,Rows:v.length,Days:days,Start:d[0].Date,End:d[d.length-1].Date})});return out}
+function metric(d,c){let out=[];if(d.length<2)return out;let rf=riskFreeCAGR(d[0].Date,d[d.length-1].Date);c.forEach(x=>{let v=d.map(r=>r[x]).filter(isFinite);if(v.length<2)return;let days=(new Date(d[d.length-1].Date)-new Date(d[0].Date))/86400000,yrs=days/365.25,re=[];for(let i=1;i<v.length;i++)re.push(v[i]/v[i-1]-1);let avg=re.reduce((a,b)=>a+b,0)/re.length,sd=Math.sqrt(re.reduce((a,b)=>a+(b-avg)**2,0)/(re.length-1)),cagr=Math.pow(v.at(-1)/v[0],1/yrs)-1,vol=sd*Math.sqrt(252),peak=v[0],dd=0;v.forEach(z=>{peak=Math.max(peak,z);dd=Math.min(dd,z/peak-1)});out.push({Model:x,'Beginning Value':v[0],'Ending Value':v.at(-1),'Total Return':v.at(-1)/v[0]-1,CAGR:cagr,Volatility:vol,Risk_Free_CAGR:rf,'Sharpe (vs BIL)':vol?(cagr-rf)/vol:null,'Max Drawdown':dd,Rows:v.length,Days:days,Start:d[0].Date,End:d[d.length-1].Date})});return out}
 function draw(id,dDaily,c,leg,isDD=false){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(isDD?pct(val):money(val),8,y+4)}c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('VOO')?2.5:2;ctx.beginPath();d.forEach((r,i)=>{let xx=L+(w-L-R)*(d.length===1?0:i/(d.length-1)),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')}
 function dailyDrawdown(d,c){let z=d.map(r=>({Date:r.Date}));c.forEach(x=>{let p=null;z.forEach((o,i)=>{let v=d[i][x];if(!isFinite(v)){o[x]=null;return}p=Math.max(p||v,v);o[x]=v/p-1})});return z}
-function chartAuditRows(name,dDaily,cols,drawdown=false){let freq=displayFrequency(dDaily), disp=sampleDisplay(drawdown?dailyDrawdown(dDaily,cols):dDaily), rows=[];cols.forEach(x=>{let vals=dDaily.map(r=>r[x]).filter(isFinite), latestDaily=dDaily.length?dDaily.at(-1)[x]:null, latestPlot=disp.length?disp.at(-1)[x]:null;let miss=dDaily.length-vals.length;rows.push({Chart:name,Series:x,Frequency:freq,'Daily Rows':dDaily.length,'Plotted Rows':disp.length,'Missing Count':miss,'Latest Daily Date':dDaily.length?dDaily.at(-1).Date:'','Latest Plot Date':disp.length?disp.at(-1).Date:'','Latest Point Diff':(isFinite(latestDaily)&&isFinite(latestPlot))?latestPlot-latestDaily:null,Status:(miss===0 && (!isFinite(latestDaily)||Math.abs((latestPlot||0)-latestDaily)<1e-8))?'PASS':'WARN'})});return rows}
+function chartAuditRows(name,dDaily,cols,drawdown=false){
+  /* FIX: previously latestDaily was always read from the raw dDaily (portfolio
+     value) series even when auditing a drawdown chart, while latestPlot came
+     from the downsampled drawdown series -- comparing dollars against a
+     percentage and producing spurious WARN rows. Both sides now come from the
+     same basis series. */
+  let basis = drawdown ? dailyDrawdown(dDaily,cols) : dDaily;
+  let freq=displayFrequency(dDaily), disp=sampleDisplay(basis), rows=[];
+  cols.forEach(x=>{
+    let vals=basis.map(r=>r[x]).filter(isFinite), latestDaily=basis.length?basis.at(-1)[x]:null, latestPlot=disp.length?disp.at(-1)[x]:null;
+    let miss=basis.length-vals.length;
+    rows.push({Chart:name,Series:x,Frequency:freq,'Daily Rows':basis.length,'Plotted Rows':disp.length,'Missing Count':miss,'Latest Daily Date':basis.length?basis.at(-1).Date:'','Latest Plot Date':disp.length?disp.at(-1).Date:'','Latest Point Diff':(isFinite(latestDaily)&&isFinite(latestPlot))?latestPlot-latestDaily:null,Status:(miss===0 && (!isFinite(latestDaily)||Math.abs((latestPlot||0)-latestDaily)<1e-8))?'PASS':'WARN'});
+  });
+  return rows;
+}
 function staticCols(){return cols(portfolio).filter(x=>x.startsWith('MWM '))}
 function tacticalModelCols(){return cols(portfolio).filter(x=>x.startsWith('Tactical '))}
 function showTab(e,id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.tabbtn').forEach(b=>b.classList.remove('active'));e.target.classList.add('active');setTimeout(render,80);setTimeout(renderAllocation,80)}
