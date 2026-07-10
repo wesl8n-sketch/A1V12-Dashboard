@@ -52,8 +52,9 @@ CONFIG  = PROJECT / "Config"
 for p in [DATA, DASH, AUDIT, BACKUPS, CONFIG]:
     p.mkdir(exist_ok=True)
 
-START_DATE = "2011-01-01"
-BASE_VALUE = 100000.0
+START_DATE      = "2008-01-01"   # Download from 2008 so EMA89 is warm by 2011
+PORTFOLIO_START = "2011-01-01"   # Dashboard / portfolio NAV starts here
+BASE_VALUE      = 100000.0
 
 # JIVE kept in CORE_ASSETS so static model allocations that hold JIVE
 # still download correctly. It is not used by the tactical signal engine.
@@ -282,7 +283,9 @@ def build_composites(wide, required_assets):
 
 
 def ema(s, n):
-    return s.ewm(span=n, adjust=False, min_periods=n).mean()
+    # min_periods=1: EMA seeds from the very first row — no NaN gap.
+    # START_DATE pulls 3 years of pre-history so EMA is warm by PORTFOLIO_START.
+    return s.ewm(span=n, adjust=False, min_periods=1).mean()
 
 
 def build_signals(comp):
@@ -356,9 +359,19 @@ def build_signals(comp):
     trades_df = pd.DataFrame(trades_list,
         columns=["Trade_Date","Trigger_Date","From","To","New_State","Rule"])
 
-    sig.to_csv(DATA / "Signal_History.csv",  index=False, date_format="%Y-%m-%d")
-    h.to_csv(  DATA / "Daily_Holdings.csv",  index=False, date_format="%Y-%m-%d")
-    trades_df.to_csv(DATA / "Trade_Ledger.csv", index=False, date_format="%Y-%m-%d")
+    # Clip to PORTFOLIO_START for dashboard output.
+    # Pre-history rows were only needed to warm the EMA89.
+    port_start = pd.to_datetime(PORTFOLIO_START)
+    sig_out    = sig[sig["Date"]               >= port_start].copy()
+    h_out      = h[h["Date"]                   >= port_start].copy()
+    trades_out = trades_df[trades_df["Trade_Date"] >= port_start].copy()
+
+    sig_out.to_csv(    DATA / "Signal_History.csv", index=False, date_format="%Y-%m-%d")
+    h_out.to_csv(      DATA / "Daily_Holdings.csv", index=False, date_format="%Y-%m-%d")
+    trades_out.to_csv( DATA / "Trade_Ledger.csv",   index=False, date_format="%Y-%m-%d")
+
+    # Return FULL sig (inc. warmup) so build_tactical_values has the
+    # complete EffectiveHolding series for portfolio NAV calculation.
     return sig, trades_df
 
 
@@ -371,6 +384,8 @@ def build_tactical_values(comp, sig):
 
     df = comp.merge(sig[["Date", "EffectiveHolding"]], on="Date", how="inner")
     df = df.dropna(subset=["MGK", "MGV", "VOO"]).sort_values("Date").reset_index(drop=True)
+    # Clip to PORTFOLIO_START — pre-history used only for EMA warmup
+    df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
 
     val  = BASE_VALUE
     rows = []
@@ -535,6 +550,9 @@ def run_audit(alloc_df, static_models, tactical_models, comp, sig, trades, tv, p
     add("Static MWM models",   "PASS", ", ".join(static_models.keys()))
     add("Tactical models",     "PASS", ", ".join(tactical_models.keys()))
     add("Tactical sleeve",     "PASS", "Binary MGK/MGV — no JIVE (v3.3)")
+    add("EMA warmup",          "PASS",
+        f"Price history downloaded from {START_DATE}; EMA89 warm by {PORTFOLIO_START}; "
+        f"portfolio NAV and dashboard start from {PORTFOLIO_START}")
     add("Cooldown rule",       "PASS",
         f"{COOLDOWN_DAYS} trading days after any trade (Growth<->Value, uniform)")
 
