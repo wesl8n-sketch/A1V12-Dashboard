@@ -989,8 +989,38 @@ def build_dashboard():
         "divperiods":   csv_payload("Dividend_Holding_Periods.csv"),
     }
     html = DASHBOARD_HTML.replace("__PAYLOAD__", json.dumps(payload))
+
+    # Deployment guard: never publish a stale dividend implementation.
+    forbidden = [
+        "Current-Year Yield on Cost",
+        "CURRENT-YEAR YIELD ON COST",
+        "Current_Year_Yield_on_Cost",
+        'id="divChart"',
+    ]
+    stale = [token for token in forbidden if token in html]
+    required = [
+        'id="divAnnualChart"',
+        'id="divCumulativeChart"',
+        "Annualized YTD Run Rate",
+        "Yield on cost is intentionally not displayed",
+    ]
+    missing = [token for token in required if token not in html]
+    if stale or missing:
+        raise RuntimeError(
+            "Dashboard deployment guard failed. "
+            f"Stale markers={stale}; missing markers={missing}"
+        )
+
     out  = DASH / "A1V12_Yahoo_Production_v3_2_Dashboard.html"
     out.write_text(html)
+
+    # Re-read the exact file written to disk so the build cannot pass if an
+    # older dashboard survives or the wrong output path is used.
+    written = out.read_text()
+    if any(token in written for token in forbidden):
+        raise RuntimeError("Stale dividend dashboard was written to the production path.")
+    if not all(token in written for token in required):
+        raise RuntimeError("Corrected dividend dashboard markers are missing from production output.")
     return out
 
 
@@ -1013,7 +1043,7 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 <section id="audit" class="tab"><div class="card"><h2>Metric Window Audit</h2><div id="windowAudit"></div><div class="scroll"><table id="windowRows"></table></div></div><div class="card"><h2>Production Audit</h2><div class="scroll"><table id="prodAuditTable"></table></div></div><div class="card"><h2>Data Audit</h2><div class="scroll"><table id="auditTable"></table></div></div></section>
 <section id="dividend" class="tab">
 <div class="card">
-  <h2>Dividend Income</h2>
+  <h2>Dividend Income <span class="pill">Income engine v4 verified</span></h2>
   <div class="note">Cash distributions are recorded separately from raw-close price return and reinvested at the distribution-date raw close for the income ledger. Yield on cost is intentionally not displayed.</div>
   <div class="controls"><b class="note">Model</b><span id="divModelButtons"></span></div>
   <div class="grid kpis" id="divKpis"></div>
@@ -1113,6 +1143,7 @@ window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation()
 
 
 def main():
+    print("BUILD MARKER: dividend-engine-v4-open-price-guarded")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
 
