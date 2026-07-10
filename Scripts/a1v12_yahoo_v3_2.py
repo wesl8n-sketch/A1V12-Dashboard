@@ -610,98 +610,257 @@ def build_holding_analytics(sig, comp_raw):
     hs["Pct_Time"] = hs["Asset"].map(hp.groupby("Asset")["Trading_Days"].sum() / hp["Trading_Days"].sum())
     hs.to_csv(DATA / "Holding_Summary.csv", index=False)
 
-def build_dividend_analytics(comp_raw, div_comp, sig, tv, static_models, tactical_models):
-    """Calculate non-reinvested cash distributions for every model and tactical sleeve."""
+def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
+                             static_models, tactical_models):
+    """
+    Calculate model-level cash distributions with a proper share ledger.
+
+    Price-return charts remain based only on raw closing prices. For the
+    Dividend Income tab, each cash distribution is recorded as income and is
+    then reinvested at that day's raw close. This prevents the model's share
+    count and future income from shrinking merely because raw prices drop by
+    the amount of each distribution.
+
+    Tactical switches execute at the next trading day's Open. Dividend income
+    is recorded for the holding owned entering the ex-dividend date.
+    """
     import pandas as pd
     import numpy as np
 
-    prices = comp_raw.merge(tv[["Date", "A1V12"]], on="Date", how="inner").sort_values("Date")
-    prices = prices[prices["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
-    dividends = div_comp.merge(prices[["Date"]], on="Date", how="right").fillna(0.0)
-    holdings = sig[["Date", "EffectiveHolding"]].merge(prices[["Date"]], on="Date", how="right")
-    holdings["EffectiveHolding"] = holdings["EffectiveHolding"].ffill().bfill()
+    prices = comp_raw.copy()
+    opens = comp_open.copy()
+    divs = div_comp.copy()
+    for frame in (prices, opens, divs):
+        frame["Date"] = pd.to_datetime(frame["Date"])
 
-    # Synthetic tactical sleeve distribution per one A1V12 index unit.
-    tactical_dist = np.zeros(len(prices))
-    h0 = holdings.loc[0, "EffectiveHolding"]
-    shares = BASE_VALUE / prices.loc[0, h0]
-    current = h0
-    period_rows, period_start, period_income = [], 0, 0.0
+    prices = prices.merge(tv[["Date", "A1V12"]], on="Date", how="inner")
+    prices = prices[prices["Date"] >= pd.to_datetime(PORTFOLIO_START)]
+    prices = prices.sort_values("Date").reset_index(drop=True)
+
+    opens = opens.merge(prices[["Date"]], on="Date", how="right")
+    divs = divs.merge(prices[["Date"]], on="Date", how="right").fillna(0.0)
+
+    hold = sig[["Date", "EffectiveHolding"]].copy()
+    hold["Date"] = pd.to_datetime(hold["Date"])
+    hold = hold.merge(prices[["Date"]], on="Date", how="right")
+    hold["EffectiveHolding"] = hold["EffectiveHolding"].ffill().bfill()
+
+    tactical_dps = np.zeros(len(prices))
+    current = str(hold.loc[0, "EffectiveHolding"])
+    shares = BASE_VALUE / float(prices.loc[0, current])
+    synthetic_units = BASE_VALUE / float(prices.loc[0, "A1V12"])
+    period_start = 0
+    period_income = 0.0
+    period_rows = []
+
     for i in range(len(prices)):
-        h = holdings.loc[i, "EffectiveHolding"]
-        if i > 0 and h != current:
-            period_rows.append({"Start_Date": prices.loc[period_start, "Date"],
-                                "End_Date": prices.loc[i-1, "Date"], "Holding": current,
-                                "Dividend_Income": period_income})
-            prior_value = shares * prices.loc[i-1, current]
-            shares = prior_value / prices.loc[i-1, h]
-            current, period_start, period_income = h, i, 0.0
-        cash = shares * float(dividends.loc[i, current] if current in dividends.columns else 0.0)
-        tactical_dist[i] = cash
+        new_h = str(hold.loc[i, "EffectiveHolding"])
+
+        dps = float(divs.loc[i, current]) if current in divs.columns else 0.0
+        cash = shares * dps
+        tactical_dps[i] = cash / synthetic_units if synthetic_units else 0.0
         period_income += cash
-    period_rows.append({"Start_Date": prices.loc[period_start, "Date"],
-                        "End_Date": prices.loc[len(prices)-1, "Date"], "Holding": current,
-                        "Dividend_Income": period_income})
-    pd.DataFrame(period_rows).to_csv(DATA / "Dividend_Holding_Periods.csv", index=False, date_format="%Y-%m-%d")
 
-    # Per synthetic A1V12 unit: the tactical index starts at BASE_VALUE.
+        close_px = float(prices.loc[i, current])
+        if cash and np.isfinite(close_px) and close_px > 0:
+            shares += cash / close_px
+
+        if i > 0 and new_h != current:
+            period_rows.append({
+                "Start_Date": prices.loc[period_start, "Date"],
+                "End_Date": prices.loc[i - 1, "Date"],
+                "Holding": current,
+                "Dividend_Income": period_income,
+            })
+            old_open = float(opens.loc[i, current])
+            new_open = float(opens.loc[i, new_h])
+            if not np.isfinite(old_open) or not np.isfinite(new_open) or new_open <= 0:
+                raise ValueError(
+                    f"Missing tactical Open price on {prices.loc[i, 'Date']} "
+                    f"for {current}->{new_h}"
+                )
+            security_value = shares * old_open
+            shares = security_value / new_open
+            current = new_h
+            period_start = i
+            period_income = 0.0
+
+    period_rows.append({
+        "Start_Date": prices.loc[period_start, "Date"],
+        "End_Date": prices.loc[len(prices) - 1, "Date"],
+        "Holding": current,
+        "Dividend_Income": period_income,
+    })
+    pd.DataFrame(period_rows).to_csv(
+        DATA / "Dividend_Holding_Periods.csv", index=False, date_format="%Y-%m-%d"
+    )
+
     prices["TACTICAL"] = prices["A1V12"]
-    dividends["TACTICAL"] = tactical_dist
-    prices["A1V12"] = prices["TACTICAL"]
-    dividends["A1V12"] = dividends["TACTICAL"]
+    divs["TACTICAL"] = tactical_dps
+    divs["A1V12"] = tactical_dps
 
-    all_models = {"VOO Benchmark": {"VOO": 1.0}, "A1V12 Tactical Sleeve": {"TACTICAL": 1.0}}
-    all_models.update(static_models); all_models.update(tactical_models)
+    all_models = {
+        "VOO Benchmark": {"VOO": 1.0},
+        "A1V12 Tactical Sleeve": {"TACTICAL": 1.0},
+    }
+    all_models.update(static_models)
+    all_models.update(tactical_models)
+
     no_rebalance = {"VOO Benchmark", "A1V12 Tactical Sleeve"}
-    annual_rows, asset_rows, summary_rows = [], [], []
-    last_date = prices["Date"].iloc[-1]
+    annual_rows, asset_rows, summary_rows, coverage_rows = [], [], [], []
+
+    last_date = pd.to_datetime(prices["Date"].iloc[-1])
     ttm_start = last_date - pd.DateOffset(years=1)
+    current_year = int(last_date.year)
+    days_elapsed = max(int(last_date.dayofyear), 1)
+    year_days = 366 if last_date.is_leap_year else 365
+    annualization_factor = year_days / days_elapsed
+
+    used_assets = sorted({
+        ("TACTICAL" if a in {"TACTICAL", "A1V12"} else a)
+        for weights in all_models.values() for a in weights
+    })
+
+    for asset in used_assets:
+        if asset not in divs.columns:
+            coverage_rows.append({
+                "Asset": asset, "Status": "FAIL", "Distribution_Count": 0,
+                "First_Distribution_Date": "", "Last_Distribution_Date": "",
+                "Total_DPS": 0.0, "Detail": "Dividend series missing"
+            })
+            continue
+        series = pd.to_numeric(divs[asset], errors="coerce").fillna(0.0)
+        mask = series.abs() > 1e-12
+        coverage_rows.append({
+            "Asset": asset,
+            "Status": "PASS" if mask.any() else "WARN",
+            "Distribution_Count": int(mask.sum()),
+            "First_Distribution_Date": prices.loc[mask, "Date"].min() if mask.any() else "",
+            "Last_Distribution_Date": prices.loc[mask, "Date"].max() if mask.any() else "",
+            "Total_DPS": float(series.sum()),
+            "Detail": "Distribution events found" if mask.any()
+                      else "No distributions found; verify this is expected",
+        })
 
     for model, weights in all_models.items():
-        keyed = {("TACTICAL" if a in {"TACTICAL", "A1V12"} else a): float(w) for a, w in weights.items()}
-        keyed = {a:w for a,w in keyed.items() if a in prices.columns}
+        keyed = {
+            ("TACTICAL" if a in {"TACTICAL", "A1V12"} else a): float(w)
+            for a, w in weights.items()
+        }
+        keyed = {a: w for a, w in keyed.items() if a in prices.columns}
         total_w = sum(keyed.values())
-        if not keyed or total_w <= 0: continue
-        keyed = {a:w/total_w for a,w in keyed.items()}
-        shares_by_asset = {a: BASE_VALUE*w/prices.loc[0,a] for a,w in keyed.items() if pd.notna(prices.loc[0,a]) and prices.loc[0,a] != 0}
-        daily = []
-        cur_year = prices.loc[0,"Date"].year
+        if not keyed or total_w <= 0:
+            continue
+        keyed = {a: w / total_w for a, w in keyed.items()}
+
+        shares_by_asset = {}
+        for asset, weight in keyed.items():
+            px0 = float(prices.loc[0, asset])
+            if np.isfinite(px0) and px0 > 0:
+                shares_by_asset[asset] = BASE_VALUE * weight / px0
+
+        daily_rows = []
+        cur_year = int(prices.loc[0, "Date"].year)
+
         for i in range(len(prices)):
-            dt = prices.loc[i,"Date"]
-            if i > 0 and model not in no_rebalance and len(shares_by_asset)>1 and dt.year != cur_year:
-                total = sum(shares_by_asset[a] * prices.loc[i-1,a] for a in shares_by_asset)
-                shares_by_asset = {a: total*w/prices.loc[i-1,a] for a,w in keyed.items() if pd.notna(prices.loc[i-1,a]) and prices.loc[i-1,a] != 0}
+            dt = pd.to_datetime(prices.loc[i, "Date"])
+
+            if (i > 0 and model not in no_rebalance and len(keyed) > 1
+                    and dt.year != cur_year):
+                prev_i = i - 1
+                total_value = sum(
+                    sh * float(prices.loc[prev_i, asset])
+                    for asset, sh in shares_by_asset.items()
+                    if pd.notna(prices.loc[prev_i, asset])
+                )
+                shares_by_asset = {
+                    asset: total_value * weight / float(prices.loc[prev_i, asset])
+                    for asset, weight in keyed.items()
+                    if pd.notna(prices.loc[prev_i, asset])
+                    and float(prices.loc[prev_i, asset]) > 0
+                }
                 cur_year = dt.year
+
             day_total = 0.0
-            for a, sh in shares_by_asset.items():
-                dps = float(dividends.loc[i,a]) if a in dividends.columns and pd.notna(dividends.loc[i,a]) else 0.0
-                cash = sh*dps
-                if cash:
-                    asset_rows.append({"Model":model,"Date":dt,"Year":dt.year,"Asset":a,"Dividend_Income":cash})
+            reinvest = {}
+
+            for asset, sh in shares_by_asset.items():
+                dps = float(divs.loc[i, asset]) if asset in divs.columns else 0.0
+                cash = sh * dps
+                if abs(cash) > 1e-12:
+                    asset_rows.append({
+                        "Model": model,
+                        "Date": dt,
+                        "Year": int(dt.year),
+                        "Asset": asset,
+                        "Dividend_Income": cash,
+                    })
+                    close_px = float(prices.loc[i, asset])
+                    if np.isfinite(close_px) and close_px > 0:
+                        reinvest[asset] = cash / close_px
                 day_total += cash
-            daily.append((dt,day_total))
-        ddf = pd.DataFrame(daily, columns=["Date","Dividend_Income"])
+
+            for asset, extra_shares in reinvest.items():
+                shares_by_asset[asset] += extra_shares
+
+            daily_rows.append((dt, day_total))
+
+        ddf = pd.DataFrame(daily_rows, columns=["Date", "Dividend_Income"])
         yearly = ddf.groupby(ddf["Date"].dt.year)["Dividend_Income"].sum()
         cumulative = 0.0
+
         for yr, cash in yearly.items():
-            cumulative += float(cash)
-            annual_rows.append({"Model":model,"Year":int(yr),"Dividend_Income":float(cash),
-                                "Cumulative_Income":cumulative,"Yield_on_Cost":float(cash)/BASE_VALUE})
-        total = float(ddf["Dividend_Income"].sum())
-        ttm = float(ddf.loc[ddf["Date"]>ttm_start,"Dividend_Income"].sum())
-        current_year = int(last_date.year)
-        cy = float(yearly.get(current_year,0.0))
-        summary_rows.append({"Model":model,"Lifetime_Dividend_Income":total,
-                             "Current_Year_Income":cy,"TTM_Dividend_Income":ttm,
-                             "Current_Year_Yield_on_Cost":cy/BASE_VALUE,
-                             "Lifetime_Income_on_Original_Capital":total/BASE_VALUE,
-                             "Through_Date":last_date})
+            cash = float(cash)
+            cumulative += cash
+            partial = (
+                int(yr) == current_year
+                and not (last_date.month == 12 and last_date.day == 31)
+            )
+            annual_rows.append({
+                "Model": model,
+                "Year": int(yr),
+                "Period": f"{int(yr)} YTD through {last_date.date()}" if partial else str(int(yr)),
+                "Dividend_Income": cash,
+                "Cumulative_Income": cumulative,
+                "Annualized_Run_Rate": cash * annualization_factor if partial else cash,
+                "Is_Partial_Year": "YES" if partial else "NO",
+            })
 
-    pd.DataFrame(annual_rows).to_csv(DATA / "Dividend_Model_Annual.csv", index=False)
-    pd.DataFrame(asset_rows).groupby(["Model","Year","Asset"],as_index=False)["Dividend_Income"].sum().to_csv(
-        DATA / "Dividend_Asset_Annual.csv", index=False)
-    pd.DataFrame(summary_rows).to_csv(DATA / "Dividend_Model_Summary.csv", index=False, date_format="%Y-%m-%d")
+        total_income = float(ddf["Dividend_Income"].sum())
+        ttm_income = float(ddf.loc[ddf["Date"] > ttm_start, "Dividend_Income"].sum())
+        current_income = float(yearly.get(current_year, 0.0))
+        summary_rows.append({
+            "Model": model,
+            "Lifetime_Dividend_Income": total_income,
+            "Current_Year_Income": current_income,
+            "Current_Year_Annualized_Run_Rate": current_income * annualization_factor,
+            "TTM_Dividend_Income": ttm_income,
+            "Through_Date": last_date,
+        })
 
+    annual_df = pd.DataFrame(annual_rows)
+    asset_df = pd.DataFrame(asset_rows)
+    summary_df = pd.DataFrame(summary_rows)
+    coverage_df = pd.DataFrame(coverage_rows)
+
+    annual_df.to_csv(DATA / "Dividend_Model_Annual.csv", index=False)
+    if not asset_df.empty:
+        asset_df.groupby(
+            ["Model", "Year", "Asset"], as_index=False
+        )["Dividend_Income"].sum().to_csv(
+            DATA / "Dividend_Asset_Annual.csv", index=False
+        )
+    else:
+        pd.DataFrame(
+            columns=["Model", "Year", "Asset", "Dividend_Income"]
+        ).to_csv(DATA / "Dividend_Asset_Annual.csv", index=False)
+
+    summary_df.to_csv(
+        DATA / "Dividend_Model_Summary.csv", index=False, date_format="%Y-%m-%d"
+    )
+    coverage_df.to_csv(
+        AUDIT / "Dividend_Coverage_Audit.csv", index=False, date_format="%Y-%m-%d"
+    )
 
 def run_audit(alloc_df, static_models, tactical_models, comp_adj, comp_raw, sig, trades, tv, pv, data_audit_df):
     import pandas as pd
@@ -801,7 +960,21 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 <section id="trade" class="tab"><div class="card"><h2>Trade Ledger</h2><div id="latestTrade2"></div><div class="scroll"><table id="tradeTable"></table></div></div></section>
 <section id="chartaudit" class="tab"><div class="card"><h2>Chart Audit</h2><div class="scroll"><table id="chartAuditTable"></table></div></div><div class="card"><h2>Chart Rules</h2><table><tr><th>Window</th><th>Display frequency</th><th>Calculation basis</th></tr><tr><td>YTD, 1Y, 2Y</td><td>Daily</td><td>Full daily values</td></tr><tr><td>&gt;2Y and &lt;8Y</td><td>Weekly, last trading observation of week</td><td>Full daily values</td></tr><tr><td>≥8Y or SI</td><td>Monthly, last trading observation of month</td><td>Full daily values</td></tr><tr><td>Drawdown</td><td>Downsample after drawdown is computed</td><td>Daily running peak first</td></tr></table></div></section>
 <section id="audit" class="tab"><div class="card"><h2>Metric Window Audit</h2><div id="windowAudit"></div><div class="scroll"><table id="windowRows"></table></div></div><div class="card"><h2>Production Audit</h2><div class="scroll"><table id="prodAuditTable"></table></div></div><div class="card"><h2>Data Audit</h2><div class="scroll"><table id="auditTable"></table></div></div></section>
-<section id="dividend" class="tab"><div class="card"><h2>Dividend Income</h2><div class="controls"><b class="note">Model</b><span id="divModelButtons"></span></div><div class="grid kpis" id="divKpis"></div><div class="grid grid2"><div><div class="chartbox"><canvas id="divChart"></canvas></div><div id="divLegend" class="legend"></div></div><div class="scroll"><table id="divAnnualTable"></table></div></div></div><div class="card"><h2>Income by Asset</h2><div class="scroll"><table id="divAssetTable"></table></div></div><div class="card"><h2>A1V12 Tactical Sleeve — Income by Holding Period</h2><div class="scroll"><table id="divPeriodTable"></table></div></div></section>
+<section id="dividend" class="tab">
+<div class="card">
+  <h2>Dividend Income</h2>
+  <div class="note">Cash distributions are recorded separately from raw-close price return and reinvested at the distribution-date raw close for the income ledger. Yield on cost is intentionally not displayed.</div>
+  <div class="controls"><b class="note">Model</b><span id="divModelButtons"></span></div>
+  <div class="grid kpis" id="divKpis"></div>
+</div>
+<div class="grid grid2">
+  <div class="card"><h2>Annual Dividend Income</h2><div class="chartbox short"><canvas id="divAnnualChart"></canvas></div><div id="divAnnualLegend" class="legend"></div></div>
+  <div class="card"><h2>Cumulative Dividend Income</h2><div class="chartbox short"><canvas id="divCumulativeChart"></canvas></div><div id="divCumulativeLegend" class="legend"></div></div>
+</div>
+<div class="card"><h2>Annual Income Detail</h2><div class="scroll"><table id="divAnnualTable"></table></div></div>
+<div class="card"><h2>Income by Asset</h2><div class="scroll"><table id="divAssetTable"></table></div></div>
+<div class="card"><h2>A1V12 Tactical Sleeve — Income by Holding Period</h2><div class="scroll"><table id="divPeriodTable"></table></div></div>
+</section>
 <section id="allocation" class="tab"><div class="card"><h2>Model Allocation</h2><div class="controls"><b class="note">Model</b><span id="allocModelButtons"></span></div><div class="grid grid2"><div><div class="chartbox"><canvas id="allocPie"></canvas></div><div id="allocLegend" class="legend"></div></div><div class="scroll"><table id="allocTable"></table></div></div></div></section>
 <section id="config" class="tab"><div class="card"><h2>Backfill Scale Audit</h2><div class="note">Backfilled series are ratio-scaled to prevent artificial jumps at live/backfill transition dates.</div><div class="scroll"><table id="backfillAuditTable"></table></div></div><div class="card"><h2>Static to Tactical Model Map</h2><div class="scroll"><table id="modelMapTable"></table></div></div><div class="card"><h2>Normalized Allocation Config</h2><div class="scroll"><table id="allocationTable"></table></div></div></section>
 </div><script>
@@ -850,7 +1023,39 @@ function renderAllocation(){if(!allocModel){if(allocModels().length){allocModel=
 let divModel=null;
 function divModels(){return divsummary.map(r=>r.Model)}
 function setDivModel(m){divModel=m;document.querySelectorAll('#divModelButtons button').forEach(b=>b.classList.toggle('active',b.textContent===m));renderDividend()}
-function renderDividend(){if(!divModel){if(divModels().length)divModel=divModels()[0];else return}let sum=divsummary.find(r=>r.Model===divModel)||{};let ann=divannual.filter(r=>r.Model===divModel).sort((a,b)=>a.Year-b.Year);let chart=ann.map(r=>({Date:String(r.Year)+'-12-31','Cumulative Income':r.Cumulative_Income,'Annual Income':r.Dividend_Income}));draw('divChart',chart,['Cumulative Income','Annual Income'],'divLegend');document.getElementById('divKpis').innerHTML=`<div class=kpi><div class=label>Lifetime Dividend Income</div><div class=big>${money(sum.Lifetime_Dividend_Income)}</div></div><div class=kpi><div class=label>Current Year Income</div><div class=big>${money(sum.Current_Year_Income)}</div></div><div class=kpi><div class=label>Trailing 12 Months</div><div class=big>${money(sum.TTM_Dividend_Income)}</div></div><div class=kpi><div class=label>Current-Year Yield on Cost</div><div class=big>${pct(sum.Current_Year_Yield_on_Cost)}</div></div>`;drawTable('divAnnualTable',ann);drawTable('divAssetTable',divasset.filter(r=>r.Model===divModel).sort((a,b)=>b.Year-a.Year||b.Dividend_Income-a.Dividend_Income));drawTable('divPeriodTable',divperiods.slice().reverse())}
+function renderDividend(){
+  if(!divModel){
+    if(divModels().length)divModel=divModels()[0];
+    else return;
+  }
+  let sum=divsummary.find(r=>r.Model===divModel)||{};
+  let ann=divannual.filter(r=>r.Model===divModel).sort((a,b)=>a.Year-b.Year);
+
+  let annualChart=ann.map(r=>({Date:String(r.Year)+'-12-31','Annual Dividend Income':r.Dividend_Income}));
+  let cumulativeChart=ann.map(r=>({Date:String(r.Year)+'-12-31','Cumulative Dividend Income':r.Cumulative_Income}));
+
+  draw('divAnnualChart',annualChart,['Annual Dividend Income'],'divAnnualLegend');
+  draw('divCumulativeChart',cumulativeChart,['Cumulative Dividend Income'],'divCumulativeLegend');
+
+  let through=sum.Through_Date||'';
+  document.getElementById('divKpis').innerHTML=
+    `<div class=kpi><div class=label>Lifetime Dividend Income</div><div class=big>${money(sum.Lifetime_Dividend_Income)}</div></div>`+
+    `<div class=kpi><div class=label>Current Year Income</div><div class=big>${money(sum.Current_Year_Income)}</div><div class=note>YTD through ${through}</div></div>`+
+    `<div class=kpi><div class=label>Trailing 12 Months</div><div class=big>${money(sum.TTM_Dividend_Income)}</div></div>`+
+    `<div class=kpi><div class=label>Annualized YTD Run Rate</div><div class=big>${money(sum.Current_Year_Annualized_Run_Rate)}</div><div class=note>Illustrative run rate, not a forecast</div></div>`;
+
+  let annualRows=ann.map(r=>({
+    Model:r.Model,
+    Period:r.Period||String(r.Year),
+    Dividend_Income:r.Dividend_Income,
+    Cumulative_Income:r.Cumulative_Income,
+    Annualized_Run_Rate:r.Annualized_Run_Rate,
+    Is_Partial_Year:r.Is_Partial_Year
+  }));
+  drawTable('divAnnualTable',annualRows);
+  drawTable('divAssetTable',divasset.filter(r=>r.Model===divModel).sort((a,b)=>b.Year-a.Year||b.Dividend_Income-a.Dividend_Income));
+  drawTable('divPeriodTable',divperiods.slice().reverse());
+}
 function init(){document.getElementById('periodButtons').innerHTML=periods.map(p=>`<button onclick="setPeriod('${p}')" class="${p==period?'active':''}">${p}</button>`).join('');preset('core');staticTables();document.getElementById('allocModelButtons').innerHTML=allocModels().map(m=>`<button onclick="setAllocModel('${m}')">${m}</button>`).join('');if(allocModels().length)setAllocModel(allocModels()[0]);document.getElementById('divModelButtons').innerHTML=divModels().map(m=>`<button onclick="setDivModel('${m.replace(/'/g,"\\'")}')">${m}</button>`).join('');if(divModels().length)setDivModel(divModels()[0]);setTimeout(render,120);setTimeout(renderAllocation,120);setTimeout(renderDividend,120)}
 window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation();renderDividend()},120));init();
 </script></body></html>"""
