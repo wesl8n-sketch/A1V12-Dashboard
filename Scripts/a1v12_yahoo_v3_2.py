@@ -182,35 +182,47 @@ def build_model_configs(alloc_df):
 
 
 def download_prices(required_assets):
-    """Download raw Close, Adjusted Close, and cash distributions in parallel."""
+    """Download Open, raw Close, Adjusted Close, and cash distributions."""
     ensure("pandas"); ensure("numpy"); ensure("yfinance")
     import pandas as pd
     import yfinance as yf
 
     all_assets = sorted(set(required_assets) | set(CORE_ASSETS) | set(RESEARCH_ASSETS))
-    adj_frames, raw_frames, div_frames, audit = [], [], [], []
+    adj_frames, raw_frames, open_frames, div_frames, audit = [], [], [], [], []
 
     for asset in all_assets:
         if asset in {"TACTICAL", "A1V12"}:
             continue
         sym = YMAP.get(asset, asset)
-        print(f"Downloading {asset} ({sym}) raw close, adjusted close, and dividends...")
+        print(f"Downloading {asset} ({sym}) open, raw close, adjusted close, and dividends...")
         try:
-            hist = yf.download(sym, start=START_DATE, auto_adjust=False, actions=True,
-                               progress=False, threads=False)
+            # Ticker.history is used because it reliably exposes action columns.
+            hist = yf.Ticker(sym).history(
+                start=START_DATE, auto_adjust=False, actions=True, repair=False
+            )
             if hist.empty and asset == "DXY":
-                hist = yf.download("^DXY", start=START_DATE, auto_adjust=False, actions=True,
-                                   progress=False, threads=False)
+                hist = yf.Ticker("^DXY").history(
+                    start=START_DATE, auto_adjust=False, actions=True, repair=False
+                )
             if hist.empty:
                 audit.append([asset, sym, "FAIL", "", "", 0, "No data returned"])
                 continue
+
             if isinstance(hist.columns, pd.MultiIndex):
                 hist.columns = hist.columns.get_level_values(0)
 
-            idx = pd.to_datetime(hist.index).tz_localize(None).normalize()
+            idx = pd.to_datetime(hist.index)
+            if getattr(idx, "tz", None) is not None:
+                idx = idx.tz_localize(None)
+            idx = idx.normalize()
+
+            open_px = pd.to_numeric(hist.get("Open"), errors="coerce")
             close = pd.to_numeric(hist.get("Close"), errors="coerce")
             adj = pd.to_numeric(hist.get("Adj Close", hist.get("Close")), errors="coerce")
-            div = pd.to_numeric(hist.get("Dividends", pd.Series(0.0, index=hist.index)), errors="coerce").fillna(0.0)
+            div = pd.to_numeric(
+                hist.get("Dividends", pd.Series(0.0, index=hist.index)),
+                errors="coerce"
+            ).fillna(0.0)
 
             def frame(series, col):
                 f = pd.DataFrame({"Date": idx, col: series.values})
@@ -218,16 +230,29 @@ def download_prices(required_assets):
 
             af = frame(adj, asset)
             rf = frame(close, asset)
-            df = pd.DataFrame({"Date": idx, asset: div.values}).drop_duplicates("Date", keep="last")
-            adj_frames.append(af); raw_frames.append(rf); div_frames.append(df)
-            audit.append([asset, sym, "OK", rf["Date"].min().date().isoformat(),
-                          rf["Date"].max().date().isoformat(), len(rf),
-                          "Raw Close + Adj Close + Dividends"])
+            of = frame(open_px, asset)
+            df = pd.DataFrame({"Date": idx, asset: div.values}).drop_duplicates(
+                "Date", keep="last"
+            )
+
+            adj_frames.append(af)
+            raw_frames.append(rf)
+            open_frames.append(of)
+            div_frames.append(df)
+
+            div_count = int((div.abs() > 1e-12).sum())
+            audit.append([
+                asset, sym, "OK",
+                rf["Date"].min().date().isoformat(),
+                rf["Date"].max().date().isoformat(),
+                len(rf),
+                f"Open + Raw Close + Adj Close; {div_count} dividend events"
+            ])
         except Exception as e:
             audit.append([asset, sym, "ERROR", "", "", 0, str(e)])
 
-    if not adj_frames or not raw_frames:
-        raise RuntimeError("No Yahoo data downloaded.")
+    if not adj_frames or not raw_frames or not open_frames:
+        raise RuntimeError("No Yahoo price data downloaded.")
 
     def merge_frames(frames):
         wide = frames[0]
@@ -237,6 +262,7 @@ def download_prices(required_assets):
 
     adj_wide = merge_frames(adj_frames)
     raw_wide = merge_frames(raw_frames)
+    open_wide = merge_frames(open_frames)
     div_wide = merge_frames(div_frames).fillna(0.0)
 
     adj_wide.to_csv(DATA / "Price_Master_Wide.csv", index=False, date_format="%Y-%m-%d")
@@ -245,12 +271,15 @@ def download_prices(required_assets):
     raw_wide.to_csv(DATA / "Price_Master_Raw_Close_Wide.csv", index=False, date_format="%Y-%m-%d")
     raw_wide.melt(id_vars=["Date"], var_name="Asset", value_name="Raw_Close").dropna().to_csv(
         DATA / "Price_Master_Raw_Close_Long.csv", index=False, date_format="%Y-%m-%d")
+    open_wide.to_csv(DATA / "Price_Master_Open_Wide.csv", index=False, date_format="%Y-%m-%d")
     div_wide.to_csv(DATA / "Dividend_Master_Wide.csv", index=False, date_format="%Y-%m-%d")
 
-    audit_df = pd.DataFrame(audit,
-        columns=["Asset","Yahoo_Symbol","Status","First_Date","Last_Date","Rows","Notes"])
+    audit_df = pd.DataFrame(
+        audit,
+        columns=["Asset","Yahoo_Symbol","Status","First_Date","Last_Date","Rows","Notes"]
+    )
     audit_df.to_csv(AUDIT / "Data_Audit.csv", index=False)
-    return adj_wide, raw_wide, div_wide, audit_df
+    return adj_wide, raw_wide, open_wide, div_wide, audit_df
 
 def build_composites(wide, required_assets, output_name="Composite_Prices.csv",
                      audit_name="Backfill_Scale_Audit.csv", price_basis="Adjusted Close"):
@@ -422,41 +451,66 @@ def build_signals(comp):
     return sig, trades_df
 
 
-def build_tactical_values(comp, sig):
+def build_tactical_values(comp_close, comp_open, sig):
     """
-    Compute daily NAV for the A1V12 tactical sleeve (MGK or MGV only)
-    plus buy-hold reference series for MGK, MGV, VOO, and BIL.
+    Compute raw-close price-return NAV for the A1V12 sleeve.
+
+    Signals are determined from adjusted closes. A holding change executes at
+    the next trading day's Open:
+      old holding: prior Close -> trade-day Open
+      new holding: trade-day Open -> trade-day Close
+    This removes the look-ahead gain created by applying the new holding's
+    full prior-close-to-current-close return on the trade date.
     """
     import pandas as pd
 
-    df = comp.merge(sig[["Date", "EffectiveHolding"]], on="Date", how="inner")
-    df = df.dropna(subset=["MGK", "MGV", "VOO"]).sort_values("Date").reset_index(drop=True)
-    # Clip to PORTFOLIO_START — pre-history used only for EMA warmup
+    close = comp_close.copy()
+    open_px = comp_open.copy()
+    close["Date"] = pd.to_datetime(close["Date"])
+    open_px["Date"] = pd.to_datetime(open_px["Date"])
+
+    open_px = open_px.rename(columns={c: f"{c}__OPEN" for c in open_px.columns if c != "Date"})
+    df = close.merge(open_px, on="Date", how="inner")
+    df = df.merge(sig[["Date", "EffectiveHolding"]], on="Date", how="inner")
+    df = df.dropna(subset=["MGK", "MGV", "VOO", "MGK__OPEN", "MGV__OPEN"])
+    df = df.sort_values("Date").reset_index(drop=True)
     df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
 
-    val  = BASE_VALUE
-    rows = []
-    for i, r in df.iterrows():
-        if i > 0:
-            p   = df.iloc[i - 1]
-            h   = r["EffectiveHolding"]          # "MGK" or "MGV"
-            val *= r[h] / p[h]
-        rows.append([r["Date"], val, r["EffectiveHolding"]])
+    val = BASE_VALUE
+    rows = [[df.loc[0, "Date"], val, df.loc[0, "EffectiveHolding"]]]
+
+    for i in range(1, len(df)):
+        prev = df.iloc[i - 1]
+        cur = df.iloc[i]
+        old_h = prev["EffectiveHolding"]
+        new_h = cur["EffectiveHolding"]
+
+        if new_h == old_h:
+            val *= cur[new_h] / prev[old_h]
+        else:
+            old_open = cur[f"{old_h}__OPEN"]
+            new_open = cur[f"{new_h}__OPEN"]
+            if pd.isna(old_open) or pd.isna(new_open) or old_open == 0 or new_open == 0:
+                raise ValueError(f"Missing trade-day Open price on {cur['Date']} for {old_h}->{new_h}")
+            val *= old_open / prev[old_h]
+            val *= cur[new_h] / new_open
+
+        rows.append([cur["Date"], val, new_h])
 
     tv = pd.DataFrame(rows, columns=["Date", "A1V12", "EffectiveHolding"])
 
-    start = df.iloc[0]
-    for a, label in [("MGK", "MGK Buy Hold"), ("MGV", "MGV Buy Hold"),
-                     ("VOO", "VOO Benchmark"), ("BIL", "BIL Buy Hold")]:
-        if a in df.columns and pd.notna(start[a]) and start[a] != 0:
-            tv[label] = BASE_VALUE * df[a] / start[a]
+    start_row = df.iloc[0]
+    for a, label in [
+        ("MGK", "MGK Buy Hold"),
+        ("MGV", "MGV Buy Hold"),
+        ("VOO", "VOO Benchmark"),
+        ("BIL", "BIL Buy Hold"),
+    ]:
+        if a in df.columns and pd.notna(start_row[a]) and start_row[a] != 0:
+            tv[label] = BASE_VALUE * df[a].values / start_row[a]
 
-    # Add a single prior year-end (Dec 31) anchor row so the YTD period
-    # rebases from Dec 31 close — matching how Koyfin computes YTD returns.
-    # Only the MOST RECENT prior year-end is added to avoid contaminating
-    # rebase denominators for other period windows (1Y, 3Y, 5Y etc.).
     latest_yr = tv["Date"].dt.year.max()
-    prior_yr  = latest_yr - 1
+    prior_yr = latest_yr - 1
     prior_data = tv[tv["Date"].dt.year == prior_yr]
     if not prior_data.empty:
         last_prior = prior_data.iloc[-1].copy()
@@ -464,14 +518,11 @@ def build_tactical_values(comp, sig):
         if not (last_prior_date.month == 12 and last_prior_date.day == 31):
             anchor = last_prior.copy()
             anchor["Date"] = pd.Timestamp(prior_yr, 12, 31)
-            anchor_df = pd.DataFrame([anchor])
-            tv = pd.concat([tv, anchor_df], ignore_index=True)
-            tv["Date"] = pd.to_datetime(tv["Date"])
+            tv = pd.concat([tv, pd.DataFrame([anchor])], ignore_index=True)
             tv = tv.sort_values("Date").reset_index(drop=True)
 
     tv.to_csv(DATA / "Tactical_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return tv
-
 
 def build_portfolios(comp, tv, static_models, tactical_models):
     """
@@ -1069,20 +1120,23 @@ def main():
     static_models, tactical_models = build_model_configs(alloc_df)
     required_assets = set(alloc_df["Production_Asset"].unique()) | {"MGK", "MGV", "VOO", "BIL"}
 
-    adj_wide, raw_wide, div_wide, data_audit_df = download_prices(required_assets)
+    adj_wide, raw_wide, open_wide, div_wide, data_audit_df = download_prices(required_assets)
     comp_adj, _ = build_composites(adj_wide, required_assets,
         output_name="Composite_Prices.csv", audit_name="Backfill_Scale_Audit.csv",
         price_basis="Adjusted Close")
     comp_raw, raw_scale = build_composites(raw_wide, required_assets,
         output_name="Composite_Prices_Raw_Close.csv", audit_name="Backfill_Raw_Scale_Audit.csv",
         price_basis="Raw Close")
+    comp_open, _ = build_composites(open_wide, required_assets,
+        output_name="Composite_Prices_Open.csv", audit_name="Backfill_Open_Scale_Audit.csv",
+        price_basis="Open")
     div_comp = build_dividend_composites(div_wide, raw_scale, required_assets)
 
     sig, trades = build_signals(comp_adj)
-    tv = build_tactical_values(comp_raw, sig)
+    tv = build_tactical_values(comp_raw, comp_open, sig)
     pv = build_portfolios(comp_raw, tv, static_models, tactical_models)
     build_holding_analytics(sig, comp_raw)
-    build_dividend_analytics(comp_raw, div_comp, sig, tv, static_models, tactical_models)
+    build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv, static_models, tactical_models)
     run_audit(alloc_df, static_models, tactical_models, comp_adj, comp_raw,
               sig, trades, tv, pv, data_audit_df)
     dash = build_dashboard()
