@@ -5,9 +5,9 @@ Date,State,EffectiveHolding
 2011-01-06,Value,MGV
 2011-01-07,Value,MGV
 2011-01-10,Value,MGV
-2011-01-11,Value,MGV
-2011-01-12,Value,MGV
-2011-01-13,Value,MGV
+2011-01-11,Growth,MGK
+2011-01-12,Growth,MGK
+2011-01-13,Growth,MGK
 2011-01-14,Value,MGV
 2011-01-18,Value,MGV
 2011-01-19,Value,MGV
@@ -75,9 +75,9 @@ Date,State,EffectiveHolding
 2011-04-18,Value,MGV
 2011-04-19,Value,MGV
 2011-04-20,Value,MGV
-2011-04-21,Value,MGV
-2011-04-25,Value,MGV
-2011-04-26,Value,MGV
+2011-04-21,Growth,MGK
+2011-04-25,Growth,MGK
+2011-04-26,Growth,MGK
 2011-04-27,Value,MGV
 2011-04-28,Value,MGV
 2011-04-29,Value,MGV
@@ -86,7 +86,7 @@ Date,State,EffectiveHolding
 2011-05-04,Value,MGV
 2011-05-05,Value,MGV
 2011-05-06,Value,MGV
-2011-05-09,Value,MGV
+2011-05-09,Growth,MGK
 2011-05-10,Growth,MGK
 2011-05-11,Growth,MGK
 2011-05-12,Growth,MGK

@@ -1,5 +1,9 @@
 Trade_Date,Trigger_Date,From,To,New_State,Rule
-2011-05-10,2011-05-09,MGV,MGK,Growth,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
+2011-01-11,2011-01-10,MGV,MGK,Growth,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
+2011-01-14,2011-01-13,MGK,MGV,Value,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
+2011-04-21,2011-04-20,MGV,MGK,Growth,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
+2011-04-27,2011-04-26,MGK,MGV,Value,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
+2011-05-09,2011-05-06,MGV,MGK,Growth,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
 2011-05-16,2011-05-13,MGK,MGV,Value,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
 2011-05-20,2011-05-19,MGV,MGK,Growth,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
 2011-06-10,2011-06-09,MGK,MGV,Value,"Next trading day after trigger (EMA89 crossover, 3-day cooldown)"
