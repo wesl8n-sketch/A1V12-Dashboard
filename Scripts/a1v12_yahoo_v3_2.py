@@ -408,32 +408,23 @@ def build_tactical_values(comp, sig):
         if a in df.columns and pd.notna(start[a]) and start[a] != 0:
             tv[label] = BASE_VALUE * df[a] / start[a]
 
-    # Prepend a Dec 31 anchor row for each year-boundary so the dashboard
-    # YTD rebase denominator matches the Dec 31 close — consistent with
-    # how external tools (e.g. Koyfin) compute YTD returns.
-    # Strategy: for every Dec 31 that falls within the data, insert that
-    # row if it exists as a trading day; otherwise find the last trading
-    # day of that year and label it as the Dec 31 anchor.
-    anchor_rows = []
-    years = sorted(tv["Date"].dt.year.unique())
-    for yr in years:
-        yr_data = tv[tv["Date"].dt.year == yr]
-        if yr_data.empty:
-            continue
-        last_row = yr_data.iloc[-1].copy()
-        # Only add anchor if last trading day is not already Dec 31
-        if last_row["Date"].month == 12 and last_row["Date"].day == 31:
-            continue  # already present
-        # Create a synthetic Dec 31 row at the last trading day's values
-        anchor = last_row.copy()
-        anchor["Date"] = pd.Timestamp(yr, 12, 31)
-        anchor_rows.append(anchor)
-
-    if anchor_rows:
-        anchors_df = pd.DataFrame(anchor_rows)
-        tv = pd.concat([tv, anchors_df], ignore_index=True)
-        tv["Date"] = pd.to_datetime(tv["Date"])
-        tv = tv.sort_values("Date").reset_index(drop=True)
+    # Add a single prior year-end (Dec 31) anchor row so the YTD period
+    # rebases from Dec 31 close — matching how Koyfin computes YTD returns.
+    # Only the MOST RECENT prior year-end is added to avoid contaminating
+    # rebase denominators for other period windows (1Y, 3Y, 5Y etc.).
+    latest_yr = tv["Date"].dt.year.max()
+    prior_yr  = latest_yr - 1
+    prior_data = tv[tv["Date"].dt.year == prior_yr]
+    if not prior_data.empty:
+        last_prior = prior_data.iloc[-1].copy()
+        last_prior_date = last_prior["Date"]
+        if not (last_prior_date.month == 12 and last_prior_date.day == 31):
+            anchor = last_prior.copy()
+            anchor["Date"] = pd.Timestamp(prior_yr, 12, 31)
+            anchor_df = pd.DataFrame([anchor])
+            tv = pd.concat([tv, anchor_df], ignore_index=True)
+            tv["Date"] = pd.to_datetime(tv["Date"])
+            tv = tv.sort_values("Date").reset_index(drop=True)
 
     tv.to_csv(DATA / "Tactical_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return tv
@@ -470,6 +461,9 @@ def build_portfolios(comp, tv, static_models, tactical_models):
 
     df = comp.merge(tv[["Date", "A1V12"]], on="Date", how="inner"
                     ).sort_values("Date").reset_index(drop=True)
+    # Ensure portfolio NAV starts from PORTFOLIO_START — comp includes
+    # pre-history dates for EMA warmup that must not appear in output.
+    df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
 
     ret = pd.DataFrame({"Date": df["Date"],
                         "TACTICAL": df["A1V12"].pct_change().fillna(0),
@@ -525,27 +519,20 @@ def build_portfolios(comp, tv, static_models, tactical_models):
 
             vals[name] = nav
 
-    # Prepend Dec 31 anchor rows so YTD rebase starts from Dec 31 close
-    anchor_rows = []
-    years = sorted(pd.to_datetime(vals["Date"]).dt.year.unique())
-    for yr in years:
-        mask = pd.to_datetime(vals["Date"]).dt.year == yr
-        yr_data = vals[mask]
-        if yr_data.empty:
-            continue
-        last_row = yr_data.iloc[-1].copy()
-        last_date = pd.to_datetime(last_row["Date"])
-        if last_date.month == 12 and last_date.day == 31:
-            continue
-        anchor = last_row.copy()
-        anchor["Date"] = pd.Timestamp(yr, 12, 31).strftime("%Y-%m-%d")
-        anchor_rows.append(anchor)
-
-    if anchor_rows:
-        anchors_df = pd.DataFrame(anchor_rows)
-        vals = pd.concat([vals, anchors_df], ignore_index=True)
-        vals["Date"] = pd.to_datetime(vals["Date"]).dt.strftime("%Y-%m-%d")
-        vals = vals.sort_values("Date").reset_index(drop=True)
+    # Add single prior year-end anchor so YTD rebases from Dec 31 close.
+    dates_ts = pd.to_datetime(vals["Date"])
+    latest_yr2 = dates_ts.dt.year.max()
+    prior_yr2  = latest_yr2 - 1
+    prior_mask2 = dates_ts.dt.year == prior_yr2
+    if prior_mask2.any():
+        last_prior2 = vals[prior_mask2].iloc[-1].copy()
+        last_prior2_date = pd.to_datetime(last_prior2["Date"])
+        if not (last_prior2_date.month == 12 and last_prior2_date.day == 31):
+            anchor2 = last_prior2.copy()
+            anchor2["Date"] = pd.Timestamp(prior_yr2, 12, 31).strftime("%Y-%m-%d")
+            vals = pd.concat([vals, pd.DataFrame([anchor2])], ignore_index=True)
+            vals["Date"] = pd.to_datetime(vals["Date"]).dt.strftime("%Y-%m-%d")
+            vals = vals.sort_values("Date").reset_index(drop=True)
 
     vals.to_csv(DATA / "Portfolio_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return vals
