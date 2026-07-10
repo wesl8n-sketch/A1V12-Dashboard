@@ -11,9 +11,9 @@ Allocation assets resolve to live data,PASS,All Production_Assets have OK price 
 Composite rows,PASS,4663
 Signal rows,PASS,4659
 Trade ledger rows,PASS,204
-Portfolio values rows,PASS,3902
+Portfolio values rows,PASS,3908
 Latest signal date,PASS,2026-07-10 00:00:00
-Latest portfolio date,PASS,2026-07-10 00:00:00
+Latest portfolio date,PASS,2026-12-31
 Portfolio rebalancing,PASS,"Annual (first trading day of each year) for all multi-asset models; continuous daily blend for single-asset models (Tactical Sleeve, VOO Benchmark)"
 Backfill scaling,PASS,Backfill legs ratio-scaled to first live observation
 Chart downsampling,PASS,"Daily <=2Y, Weekly >2Y, Monthly >=8Y/SI"
