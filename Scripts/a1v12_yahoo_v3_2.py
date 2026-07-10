@@ -404,6 +404,32 @@ def build_tactical_values(comp, sig):
         if a in df.columns and pd.notna(start[a]) and start[a] != 0:
             tv[label] = BASE_VALUE * df[a] / start[a]
 
+    # Prepend a Dec 31 anchor row for each year-boundary so the dashboard
+    # YTD rebase denominator matches the Dec 31 close — consistent with
+    # how external tools (e.g. Koyfin) compute YTD returns.
+    # Strategy: for every Dec 31 that falls within the data, insert that
+    # row if it exists as a trading day; otherwise find the last trading
+    # day of that year and label it as the Dec 31 anchor.
+    anchor_rows = []
+    years = sorted(tv["Date"].dt.year.unique())
+    for yr in years:
+        yr_data = tv[tv["Date"].dt.year == yr]
+        if yr_data.empty:
+            continue
+        last_row = yr_data.iloc[-1].copy()
+        # Only add anchor if last trading day is not already Dec 31
+        if last_row["Date"].month == 12 and last_row["Date"].day == 31:
+            continue  # already present
+        # Create a synthetic Dec 31 row at the last trading day's values
+        anchor = last_row.copy()
+        anchor["Date"] = pd.Timestamp(yr, 12, 31)
+        anchor_rows.append(anchor)
+
+    if anchor_rows:
+        anchors_df = pd.DataFrame(anchor_rows)
+        tv = pd.concat([tv, anchors_df], ignore_index=True
+                       ).sort_values("Date").reset_index(drop=True)
+
     tv.to_csv(DATA / "Tactical_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return tv
 
@@ -493,6 +519,27 @@ def build_portfolios(comp, tv, static_models, tactical_models):
                 nav.append(sum(holdings.values()))
 
             vals[name] = nav
+
+    # Prepend Dec 31 anchor rows so YTD rebase starts from Dec 31 close
+    anchor_rows = []
+    years = sorted(pd.to_datetime(vals["Date"]).dt.year.unique())
+    for yr in years:
+        mask = pd.to_datetime(vals["Date"]).dt.year == yr
+        yr_data = vals[mask]
+        if yr_data.empty:
+            continue
+        last_row = yr_data.iloc[-1].copy()
+        last_date = pd.to_datetime(last_row["Date"])
+        if last_date.month == 12 and last_date.day == 31:
+            continue
+        anchor = last_row.copy()
+        anchor["Date"] = pd.Timestamp(yr, 12, 31).strftime("%Y-%m-%d")
+        anchor_rows.append(anchor)
+
+    if anchor_rows:
+        anchors_df = pd.DataFrame(anchor_rows)
+        vals = pd.concat([vals, anchors_df], ignore_index=True
+                         ).sort_values("Date").reset_index(drop=True)
 
     vals.to_csv(DATA / "Portfolio_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return vals
@@ -647,7 +694,7 @@ function sortVal(v){if(v==null||v==='')return null;if(typeof v==='number')return
 function sortRows(id,h){let rows=tableData[id]||[],key=id+'|'+h,dir=sortState[key]=='asc'?'desc':'asc';sortState={};sortState[key]=dir;let sorted=[...rows].sort((a,b)=>{let av=sortVal(a[h]),bv=sortVal(b[h]);if(av==null&&bv==null)return 0;if(av==null)return 1;if(bv==null)return -1;if(av<bv)return dir=='asc'?-1:1;if(av>bv)return dir=='asc'?1:-1;return 0});drawTable(id,sorted)}
 function drawTable(id,rows,freeze=false){let e=document.getElementById(id);if(!e)return;if(!rows||!rows.length){e.innerHTML='<tr><td class=note>No data</td></tr>';return}tableData[id]=rows;let H=Object.keys(rows[0]).filter(h=>h!='__current');let sk=Object.keys(sortState).find(k=>k.startsWith(id+'|')),active=sk?sk.split('|')[1]:null,dir=sk?sortState[sk]:null;e.innerHTML='<thead><tr>'+H.map((h,i)=>`<th class="${freeze&&i<3?'freeze'+(i+1):''}" onclick="sortRows('${id}','${String(h).replace(/'/g,"\\'")}')">${h}${active==h?(dir=='asc'?' ▲':' ▼'):''}</th>`).join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+H.map((h,i)=>`<td class="${(freeze&&i<3?'freeze'+(i+1)+' ':'')+cls(h,r[h],r)}">${fmt(h,r[h])}</td>`).join('')+'</tr>').join('')+'</tbody>'}
 function cols(d){return d.length?Object.keys(d[0]).filter(k=>k!='Date'):[]}
-function cut(d){if(!d.length)return[];let end=new Date(d[d.length-1].Date),start=new Date(d[0].Date);if(period=='YTD')start=new Date(end.getFullYear(),0,1);else if(period.endsWith('Y')){start=new Date(end);start.setFullYear(start.getFullYear()-parseInt(period))}else if(period=='2018')start=new Date('2018-01-01');else if(period=='2016')start=new Date('2016-01-01');return d.filter(r=>new Date(r.Date)>=start&&new Date(r.Date)<=end)}
+function cut(d){if(!d.length)return[];let end=new Date(d[d.length-1].Date),start=new Date(d[0].Date);if(period=='YTD')start=new Date(end.getFullYear()-1,11,31);else if(period.endsWith('Y')){start=new Date(end);start.setFullYear(start.getFullYear()-parseInt(period))}else if(period=='2018')start=new Date('2018-01-01');else if(period=='2016')start=new Date('2016-01-01');return d.filter(r=>new Date(r.Date)>=start&&new Date(r.Date)<=end)}
 function yearsIn(d){return d.length>1?(new Date(d.at(-1).Date)-new Date(d[0].Date))/86400000/365.25:0}
 function displayFrequency(d){let yrs=period==='SI'?99:yearsIn(d);if(period==='YTD'||period==='1Y'||period==='2Y'||yrs<=2.05)return 'Daily';if(yrs>=8)return 'Monthly';return 'Weekly'}
 function sampleDisplay(d){let freq=displayFrequency(d);if(freq==='Daily')return d;let map=new Map();d.forEach(r=>{let dt=new Date(r.Date);let key;if(freq==='Monthly'){key=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')}else{let x=new Date(dt);let day=x.getDay();let diff=(day+6)%7;x.setDate(x.getDate()-diff);key=x.toISOString().slice(0,10)}map.set(key,r)});return Array.from(map.values())}
