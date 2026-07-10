@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
-A1V12 Yahoo Production v3.3 (MGK/MGV Binary Tactical Sleeve)
+A1V12 Yahoo Production v3.3 (Raw-Close Performance + Dividend Income)
 
 Complete integrated package.
+
+Production methodology:
+- Charts, NAV, metrics, and drawdowns use raw Close prices.
+- Tactical signals use Adjusted Close prices.
+- Dividend income is calculated separately at full model level.
 
 v3.3 changes from v3.2:
 - Tactical sleeve simplified to binary MGK / MGV rotation — JIVE removed
@@ -177,67 +182,83 @@ def build_model_configs(alloc_df):
 
 
 def download_prices(required_assets):
+    """Download raw Close, Adjusted Close, and cash distributions in parallel."""
     ensure("pandas"); ensure("numpy"); ensure("yfinance")
     import pandas as pd
     import yfinance as yf
+
     all_assets = sorted(set(required_assets) | set(CORE_ASSETS) | set(RESEARCH_ASSETS))
-    frames, audit = [], []
+    adj_frames, raw_frames, div_frames, audit = [], [], [], []
+
     for asset in all_assets:
         if asset in {"TACTICAL", "A1V12"}:
             continue
         sym = YMAP.get(asset, asset)
-        print(f"Downloading {asset} ({sym}) adjusted close...")
+        print(f"Downloading {asset} ({sym}) raw close, adjusted close, and dividends...")
         try:
-            raw = yf.download(sym, start=START_DATE, auto_adjust=False,
-                              progress=False, threads=False)
-            if raw.empty and asset == "DXY":
-                raw = yf.download("^DXY", start=START_DATE, auto_adjust=False,
-                                  progress=False, threads=False)
-            if raw.empty:
+            hist = yf.download(sym, start=START_DATE, auto_adjust=False, actions=True,
+                               progress=False, threads=False)
+            if hist.empty and asset == "DXY":
+                hist = yf.download("^DXY", start=START_DATE, auto_adjust=False, actions=True,
+                                   progress=False, threads=False)
+            if hist.empty:
                 audit.append([asset, sym, "FAIL", "", "", 0, "No data returned"])
                 continue
-            # yfinance may return MultiIndex columns (e.g. ('Adj Close','MGK'))
-            # even for single-ticker downloads — flatten before accessing.
-            if isinstance(raw.columns, pd.MultiIndex):
-                raw.columns = raw.columns.get_level_values(0)
-            series = raw["Adj Close"] if "Adj Close" in raw.columns else raw["Close"]
-            f = series.reset_index()
-            f.columns = ["Date", asset]
-            f["Date"]  = pd.to_datetime(f["Date"]).dt.normalize()
-            f[asset]   = pd.to_numeric(f[asset], errors="coerce")
-            f = f.dropna(subset=[asset])
-            frames.append(f)
-            audit.append([asset, sym, "OK",
-                          f["Date"].min().date().isoformat(),
-                          f["Date"].max().date().isoformat(),
-                          len(f), "Adj Close"])
+            if isinstance(hist.columns, pd.MultiIndex):
+                hist.columns = hist.columns.get_level_values(0)
+
+            idx = pd.to_datetime(hist.index).tz_localize(None).normalize()
+            close = pd.to_numeric(hist.get("Close"), errors="coerce")
+            adj = pd.to_numeric(hist.get("Adj Close", hist.get("Close")), errors="coerce")
+            div = pd.to_numeric(hist.get("Dividends", pd.Series(0.0, index=hist.index)), errors="coerce").fillna(0.0)
+
+            def frame(series, col):
+                f = pd.DataFrame({"Date": idx, col: series.values})
+                return f.dropna(subset=[col]).drop_duplicates("Date", keep="last")
+
+            af = frame(adj, asset)
+            rf = frame(close, asset)
+            df = pd.DataFrame({"Date": idx, asset: div.values}).drop_duplicates("Date", keep="last")
+            adj_frames.append(af); raw_frames.append(rf); div_frames.append(df)
+            audit.append([asset, sym, "OK", rf["Date"].min().date().isoformat(),
+                          rf["Date"].max().date().isoformat(), len(rf),
+                          "Raw Close + Adj Close + Dividends"])
         except Exception as e:
             audit.append([asset, sym, "ERROR", "", "", 0, str(e)])
-    if not frames:
+
+    if not adj_frames or not raw_frames:
         raise RuntimeError("No Yahoo data downloaded.")
-    wide = frames[0]
-    for f in frames[1:]:
-        wide = wide.merge(f, on="Date", how="outer")
-    wide = wide.sort_values("Date").reset_index(drop=True)
-    wide.to_csv(DATA / "Price_Master_Wide.csv",  index=False, date_format="%Y-%m-%d")
-    wide.melt(id_vars=["Date"], var_name="Asset", value_name="Adj_Close").dropna(
-    ).to_csv(DATA / "Price_Master_Long.csv", index=False, date_format="%Y-%m-%d")
+
+    def merge_frames(frames):
+        wide = frames[0]
+        for f in frames[1:]:
+            wide = wide.merge(f, on="Date", how="outer")
+        return wide.sort_values("Date").reset_index(drop=True)
+
+    adj_wide = merge_frames(adj_frames)
+    raw_wide = merge_frames(raw_frames)
+    div_wide = merge_frames(div_frames).fillna(0.0)
+
+    adj_wide.to_csv(DATA / "Price_Master_Wide.csv", index=False, date_format="%Y-%m-%d")
+    adj_wide.melt(id_vars=["Date"], var_name="Asset", value_name="Adj_Close").dropna().to_csv(
+        DATA / "Price_Master_Long.csv", index=False, date_format="%Y-%m-%d")
+    raw_wide.to_csv(DATA / "Price_Master_Raw_Close_Wide.csv", index=False, date_format="%Y-%m-%d")
+    raw_wide.melt(id_vars=["Date"], var_name="Asset", value_name="Raw_Close").dropna().to_csv(
+        DATA / "Price_Master_Raw_Close_Long.csv", index=False, date_format="%Y-%m-%d")
+    div_wide.to_csv(DATA / "Dividend_Master_Wide.csv", index=False, date_format="%Y-%m-%d")
+
     audit_df = pd.DataFrame(audit,
         columns=["Asset","Yahoo_Symbol","Status","First_Date","Last_Date","Rows","Notes"])
     audit_df.to_csv(AUDIT / "Data_Audit.csv", index=False)
-    return wide, audit_df
+    return adj_wide, raw_wide, div_wide, audit_df
 
-
-def build_composites(wide, required_assets):
-    """
-    Build continuous composite price series with ratio-scaled backfills.
-    Backfill legs are scaled so the proxy aligns with the first live
-    observation after the cutoff, preventing artificial transition jumps.
-    """
+def build_composites(wide, required_assets, output_name="Composite_Prices.csv",
+                     audit_name="Backfill_Scale_Audit.csv", price_basis="Adjusted Close"):
+    """Build continuous, ratio-scaled composite prices for one price basis."""
     import pandas as pd
     import numpy as np
 
-    df   = wide.copy()
+    df = wide.copy()
     df["Date"] = pd.to_datetime(df["Date"])
     comp = pd.DataFrame({"Date": df["Date"]})
     assets = sorted(set(required_assets) | set(CORE_ASSETS))
@@ -250,27 +271,23 @@ def build_composites(wide, required_assets):
             bf, until = BACKFILLS[asset]
             cutoff = pd.to_datetime(until)
             live = pd.to_numeric(df[asset], errors="coerce") if asset in df.columns else pd.Series(float("nan"), index=df.index)
-            bfv  = pd.to_numeric(df[bf],    errors="coerce") if bf    in df.columns else pd.Series(float("nan"), index=df.index)
-            scale     = 1.0
-            live_date = None
-            bf_date   = None
-            status    = "UNSCALED"
+            bfv = pd.to_numeric(df[bf], errors="coerce") if bf in df.columns else pd.Series(float("nan"), index=df.index)
+            scale, live_date, bf_date, status = 1.0, None, None, "UNSCALED"
             live_mask = (df["Date"] > cutoff) & live.notna()
             if live_mask.any() and bfv.notna().any():
-                live_idx  = live_mask[live_mask].index[0]
+                live_idx = live_mask[live_mask].index[0]
                 live_date = df.loc[live_idx, "Date"]
-                prior_bf_mask = (df["Date"] <= live_date) & bfv.notna()
-                if prior_bf_mask.any():
-                    bf_idx  = prior_bf_mask[prior_bf_mask].index[-1]
+                prior = (df["Date"] <= live_date) & bfv.notna()
+                if prior.any():
+                    bf_idx = prior[prior].index[-1]
                     bf_date = df.loc[bf_idx, "Date"]
-                    lv = live.loc[live_idx]; bv = bfv.loc[bf_idx]
+                    lv, bv = live.loc[live_idx], bfv.loc[bf_idx]
                     if pd.notna(lv) and pd.notna(bv) and bv != 0:
-                        scale  = float(lv / bv)
-                        status = "SCALED"
+                        scale, status = float(lv / bv), "SCALED"
             comp[asset] = np.where(df["Date"] <= cutoff, bfv * scale, live)
             scale_rows.append([asset, bf, until, scale, status,
                                live_date.date().isoformat() if live_date is not None else "",
-                               bf_date.date().isoformat()   if bf_date  is not None else ""])
+                               bf_date.date().isoformat() if bf_date is not None else "", price_basis])
         else:
             comp[asset] = df[asset] if asset in df.columns else float("nan")
 
@@ -278,13 +295,39 @@ def build_composites(wide, required_assets):
         if asset in df.columns and asset not in comp.columns:
             comp[asset] = df[asset]
 
-    comp.to_csv(DATA / "Composite_Prices.csv", index=False, date_format="%Y-%m-%d")
-    pd.DataFrame(scale_rows,
+    comp.to_csv(DATA / output_name, index=False, date_format="%Y-%m-%d")
+    scale_df = pd.DataFrame(scale_rows,
         columns=["Asset","Backfill_Asset","Cutoff","Scale_Factor","Status",
-                 "First_Live_Date","Backfill_Anchor_Date"]
-    ).to_csv(AUDIT / "Backfill_Scale_Audit.csv", index=False)
-    return comp
+                 "First_Live_Date","Backfill_Anchor_Date","Price_Basis"])
+    scale_df.to_csv(AUDIT / audit_name, index=False)
+    return comp, scale_df
 
+
+def build_dividend_composites(div_wide, raw_scale_df, required_assets):
+    """Create production-asset dividend-per-share series, including scaled backfills."""
+    import pandas as pd
+    import numpy as np
+
+    df = div_wide.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    out = pd.DataFrame({"Date": df["Date"]})
+    scale_map = {r["Asset"]: float(r["Scale_Factor"]) for _, r in raw_scale_df.iterrows()}
+    assets = sorted(set(required_assets) | set(CORE_ASSETS))
+
+    for asset in assets:
+        if asset in {"TACTICAL", "A1V12"}:
+            continue
+        live = pd.to_numeric(df[asset], errors="coerce").fillna(0.0) if asset in df.columns else pd.Series(0.0, index=df.index)
+        if asset in BACKFILLS:
+            bf, until = BACKFILLS[asset]
+            cutoff = pd.to_datetime(until)
+            proxy = pd.to_numeric(df[bf], errors="coerce").fillna(0.0) if bf in df.columns else pd.Series(0.0, index=df.index)
+            out[asset] = np.where(df["Date"] <= cutoff, proxy * scale_map.get(asset, 1.0), live)
+        else:
+            out[asset] = live
+
+    out.to_csv(DATA / "Composite_Dividends.csv", index=False, date_format="%Y-%m-%d")
+    return out
 
 def ema(s, n):
     # min_periods=1: EMA seeds from the very first row — no NaN gap.
@@ -538,22 +581,19 @@ def build_portfolios(comp, tv, static_models, tactical_models):
     return vals
 
 
-def build_holding_analytics(sig):
+def build_holding_analytics(sig, comp_raw):
     import pandas as pd
-    df = sig[["Date", "EffectiveHolding", "MGK", "MGV"]].copy()
+    px = comp_raw[["Date", "MGK", "MGV"]].copy()
+    df = sig[["Date", "EffectiveHolding"]].merge(px, on="Date", how="left")
+    df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].dropna(subset=["MGK", "MGV"]).reset_index(drop=True)
     rows, start, current = [], 0, df.loc[0, "EffectiveHolding"]
 
     def period(st, en, asset):
         sub = df.iloc[st:en + 1]
-        sp  = sub[asset].iloc[0]
-        ep  = sub[asset].iloc[-1]
-        return {"Start_Date":    sub["Date"].iloc[0],
-                "End_Date":      sub["Date"].iloc[-1],
-                "Asset":         asset,
-                "Trading_Days":  len(sub),
-                "Start_Price":   sp,
-                "End_Price":     ep,
-                "Return":        ep / sp - 1 if sp else None}
+        sp, ep = sub[asset].iloc[0], sub[asset].iloc[-1]
+        return {"Start_Date": sub["Date"].iloc[0], "End_Date": sub["Date"].iloc[-1],
+                "Asset": asset, "Trading_Days": len(sub), "Start_Price": sp,
+                "End_Price": ep, "Return": ep / sp - 1 if sp else None}
 
     for i in range(1, len(df)):
         if df.loc[i, "EffectiveHolding"] != current:
@@ -563,28 +603,114 @@ def build_holding_analytics(sig):
 
     hp = pd.DataFrame(rows)
     hp.to_csv(DATA / "Holding_Periods.csv", index=False, date_format="%Y-%m-%d")
-
-    hs = hp.groupby("Asset").agg(
-        Periods=("Asset", "count"),
-        Avg_Trading_Days=("Trading_Days", "mean"),
-        Median_Trading_Days=("Trading_Days", "median"),
-        Min_Trading_Days=("Trading_Days", "min"),
-        Max_Trading_Days=("Trading_Days", "max"),
-        Avg_Return=("Return", "mean"),
-        Best_Return=("Return", "max"),
-        Worst_Return=("Return", "min"),
-    ).reset_index()
-    hs["Pct_Time"] = hs["Asset"].map(
-        hp.groupby("Asset")["Trading_Days"].sum() / hp["Trading_Days"].sum())
+    hs = hp.groupby("Asset").agg(Periods=("Asset", "count"), Avg_Trading_Days=("Trading_Days", "mean"),
+        Median_Trading_Days=("Trading_Days", "median"), Min_Trading_Days=("Trading_Days", "min"),
+        Max_Trading_Days=("Trading_Days", "max"), Avg_Return=("Return", "mean"),
+        Best_Return=("Return", "max"), Worst_Return=("Return", "min")).reset_index()
+    hs["Pct_Time"] = hs["Asset"].map(hp.groupby("Asset")["Trading_Days"].sum() / hp["Trading_Days"].sum())
     hs.to_csv(DATA / "Holding_Summary.csv", index=False)
 
+def build_dividend_analytics(comp_raw, div_comp, sig, tv, static_models, tactical_models):
+    """Calculate non-reinvested cash distributions for every model and tactical sleeve."""
+    import pandas as pd
+    import numpy as np
 
-def run_audit(alloc_df, static_models, tactical_models, comp, sig, trades, tv, pv, data_audit_df):
+    prices = comp_raw.merge(tv[["Date", "A1V12"]], on="Date", how="inner").sort_values("Date")
+    prices = prices[prices["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
+    dividends = div_comp.merge(prices[["Date"]], on="Date", how="right").fillna(0.0)
+    holdings = sig[["Date", "EffectiveHolding"]].merge(prices[["Date"]], on="Date", how="right")
+    holdings["EffectiveHolding"] = holdings["EffectiveHolding"].ffill().bfill()
+
+    # Synthetic tactical sleeve distribution per one A1V12 index unit.
+    tactical_dist = np.zeros(len(prices))
+    h0 = holdings.loc[0, "EffectiveHolding"]
+    shares = BASE_VALUE / prices.loc[0, h0]
+    current = h0
+    period_rows, period_start, period_income = [], 0, 0.0
+    for i in range(len(prices)):
+        h = holdings.loc[i, "EffectiveHolding"]
+        if i > 0 and h != current:
+            period_rows.append({"Start_Date": prices.loc[period_start, "Date"],
+                                "End_Date": prices.loc[i-1, "Date"], "Holding": current,
+                                "Dividend_Income": period_income})
+            prior_value = shares * prices.loc[i-1, current]
+            shares = prior_value / prices.loc[i-1, h]
+            current, period_start, period_income = h, i, 0.0
+        cash = shares * float(dividends.loc[i, current] if current in dividends.columns else 0.0)
+        tactical_dist[i] = cash
+        period_income += cash
+    period_rows.append({"Start_Date": prices.loc[period_start, "Date"],
+                        "End_Date": prices.loc[len(prices)-1, "Date"], "Holding": current,
+                        "Dividend_Income": period_income})
+    pd.DataFrame(period_rows).to_csv(DATA / "Dividend_Holding_Periods.csv", index=False, date_format="%Y-%m-%d")
+
+    # Per synthetic A1V12 unit: the tactical index starts at BASE_VALUE.
+    prices["TACTICAL"] = prices["A1V12"]
+    dividends["TACTICAL"] = tactical_dist
+    prices["A1V12"] = prices["TACTICAL"]
+    dividends["A1V12"] = dividends["TACTICAL"]
+
+    all_models = {"VOO Benchmark": {"VOO": 1.0}, "A1V12 Tactical Sleeve": {"TACTICAL": 1.0}}
+    all_models.update(static_models); all_models.update(tactical_models)
+    no_rebalance = {"VOO Benchmark", "A1V12 Tactical Sleeve"}
+    annual_rows, asset_rows, summary_rows = [], [], []
+    last_date = prices["Date"].iloc[-1]
+    ttm_start = last_date - pd.DateOffset(years=1)
+
+    for model, weights in all_models.items():
+        keyed = {("TACTICAL" if a in {"TACTICAL", "A1V12"} else a): float(w) for a, w in weights.items()}
+        keyed = {a:w for a,w in keyed.items() if a in prices.columns}
+        total_w = sum(keyed.values())
+        if not keyed or total_w <= 0: continue
+        keyed = {a:w/total_w for a,w in keyed.items()}
+        shares_by_asset = {a: BASE_VALUE*w/prices.loc[0,a] for a,w in keyed.items() if pd.notna(prices.loc[0,a]) and prices.loc[0,a] != 0}
+        daily = []
+        cur_year = prices.loc[0,"Date"].year
+        for i in range(len(prices)):
+            dt = prices.loc[i,"Date"]
+            if i > 0 and model not in no_rebalance and len(shares_by_asset)>1 and dt.year != cur_year:
+                total = sum(shares_by_asset[a] * prices.loc[i-1,a] for a in shares_by_asset)
+                shares_by_asset = {a: total*w/prices.loc[i-1,a] for a,w in keyed.items() if pd.notna(prices.loc[i-1,a]) and prices.loc[i-1,a] != 0}
+                cur_year = dt.year
+            day_total = 0.0
+            for a, sh in shares_by_asset.items():
+                dps = float(dividends.loc[i,a]) if a in dividends.columns and pd.notna(dividends.loc[i,a]) else 0.0
+                cash = sh*dps
+                if cash:
+                    asset_rows.append({"Model":model,"Date":dt,"Year":dt.year,"Asset":a,"Dividend_Income":cash})
+                day_total += cash
+            daily.append((dt,day_total))
+        ddf = pd.DataFrame(daily, columns=["Date","Dividend_Income"])
+        yearly = ddf.groupby(ddf["Date"].dt.year)["Dividend_Income"].sum()
+        cumulative = 0.0
+        for yr, cash in yearly.items():
+            cumulative += float(cash)
+            annual_rows.append({"Model":model,"Year":int(yr),"Dividend_Income":float(cash),
+                                "Cumulative_Income":cumulative,"Yield_on_Cost":float(cash)/BASE_VALUE})
+        total = float(ddf["Dividend_Income"].sum())
+        ttm = float(ddf.loc[ddf["Date"]>ttm_start,"Dividend_Income"].sum())
+        current_year = int(last_date.year)
+        cy = float(yearly.get(current_year,0.0))
+        summary_rows.append({"Model":model,"Lifetime_Dividend_Income":total,
+                             "Current_Year_Income":cy,"TTM_Dividend_Income":ttm,
+                             "Current_Year_Yield_on_Cost":cy/BASE_VALUE,
+                             "Lifetime_Income_on_Original_Capital":total/BASE_VALUE,
+                             "Through_Date":last_date})
+
+    pd.DataFrame(annual_rows).to_csv(DATA / "Dividend_Model_Annual.csv", index=False)
+    pd.DataFrame(asset_rows).groupby(["Model","Year","Asset"],as_index=False)["Dividend_Income"].sum().to_csv(
+        DATA / "Dividend_Asset_Annual.csv", index=False)
+    pd.DataFrame(summary_rows).to_csv(DATA / "Dividend_Model_Summary.csv", index=False, date_format="%Y-%m-%d")
+
+
+def run_audit(alloc_df, static_models, tactical_models, comp_adj, comp_raw, sig, trades, tv, pv, data_audit_df):
     import pandas as pd
     checks = []
     def add(name, status, detail): checks.append([name, status, detail])
 
-    add("Price basis",         "PASS", "Yahoo Adjusted Close")
+    add("Performance price basis", "PASS", "Yahoo raw Close for NAV, charts, metrics, and drawdowns")
+    add("Signal price basis",      "PASS", "Yahoo Adjusted Close for MGK/MGV ratio and EMA89")
+    add("Dividend treatment",      "PASS", "Cash distributions reported separately; not reinvested in price-return NAV")
     add("Allocation file",     "PASS", "Config/MWM_Allocations.csv")
     add("Allocation rows",     "PASS", str(len(alloc_df)))
     add("Static MWM models",   "PASS", ", ".join(static_models.keys()))
@@ -610,7 +736,8 @@ def run_audit(alloc_df, static_models, tactical_models, comp, sig, trades, tv, p
         "All Production_Assets have OK price data" if not missing
         else f"Unresolved/failed: {', '.join(missing)}")
 
-    add("Composite rows",       "PASS" if len(comp)   else "FAIL", str(len(comp)))
+    add("Adjusted composite rows", "PASS" if len(comp_adj) else "FAIL", str(len(comp_adj)))
+    add("Raw composite rows",      "PASS" if len(comp_raw) else "FAIL", str(len(comp_raw)))
     add("Signal rows",          "PASS" if len(sig)    else "FAIL", str(len(sig)))
     add("Trade ledger rows",    "PASS" if len(trades) else "WARN", str(len(trades)))
     add("Portfolio values rows","PASS" if len(pv)     else "FAIL", str(len(pv)))
@@ -646,6 +773,10 @@ def build_dashboard():
         "modelmap":     csv_payload("Tactical_Model_Map.csv"),
         "alloc":        csv_payload("Allocation_Config_Normalized.csv"),
         "backfillaudit":(AUDIT / "Backfill_Scale_Audit.csv").read_text() if (AUDIT / "Backfill_Scale_Audit.csv").exists() else "",
+        "divsummary":   csv_payload("Dividend_Model_Summary.csv"),
+        "divannual":    csv_payload("Dividend_Model_Annual.csv"),
+        "divasset":     csv_payload("Dividend_Asset_Annual.csv"),
+        "divperiods":   csv_payload("Dividend_Holding_Periods.csv"),
     }
     html = DASHBOARD_HTML.replace("__PAYLOAD__", json.dumps(payload))
     out  = DASH / "A1V12_Yahoo_Production_v3_2_Dashboard.html"
@@ -658,7 +789,8 @@ DASHBOARD_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name
 body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width:1680px;margin:auto;padding:18px}h1{color:#17365d;margin:0}.sub{color:#64748b;font-size:13px}.card{background:white;border:1px solid #d7deea;border-radius:13px;padding:14px;margin:12px 0}.tabs,.controls,.checks{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:8px 11px;font-weight:700;cursor:pointer}button.active{background:#17365d;color:white}.tab{display:none}.tab.active{display:block}.grid{display:grid;gap:12px}.grid2{grid-template-columns:2fr 1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.kpi{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}.label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800}.big{font-size:22px;font-weight:900}.chartbox{height:430px;width:100%;border:1px solid #eef2f7;border-radius:10px;background:white}.chartbox.short{height:300px}canvas{width:100%;height:100%;display:block}.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;margin-top:10px}.sw{width:18px;height:4px;border-radius:2px;display:inline-block;margin-right:5px}.scroll{max-height:560px;overflow:auto;border:1px solid #eef2f7;border-radius:10px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #e5e7eb;padding:7px;text-align:right;white-space:nowrap}th{background:#f3f4f6;position:sticky;top:0;cursor:pointer;z-index:2}td:first-child,th:first-child{text-align:left}.freeze1{position:sticky;left:0;background:white;z-index:1;min-width:120px}.freeze2{position:sticky;left:120px;background:white;z-index:1;min-width:90px}.freeze3{position:sticky;left:210px;background:white;z-index:1;min-width:180px}.good{color:#15803d;font-weight:800}.bad{color:#b91c1c;font-weight:800}.pass{color:#15803d;font-weight:900}.fail{color:#b91c1c;font-weight:900}.warn{color:#a16207;font-weight:900}.note{font-size:12px;color:#64748b}.pill{display:inline-block;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;font-weight:700}.state-growth{background:#ecfdf5}.state-value{background:#eff6ff}.tradebox{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tradeitem{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
 </style></head><body><div class="wrap">
 <h1>A1V12 Yahoo Production v3.3</h1><div class="sub">Binary MGK/MGV tactical sleeve. Annual rebalancing for multi-asset models. Daily calculations retained; chart downsampling is display-only.</div>
-<div class="tabs"><button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button><button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button><button class="tabbtn" onclick="showTab(event,'mwm')">MWM Static</button><button class="tabbtn" onclick="showTab(event,'tacticalmodels')">Tactical Models</button><button class="tabbtn" onclick="showTab(event,'signals')">Signals</button><button class="tabbtn" onclick="showTab(event,'holding')">Holding Analytics</button><button class="tabbtn" onclick="showTab(event,'trade')">Trade Log</button><button class="tabbtn" onclick="showTab(event,'chartaudit')">Chart Audit</button><button class="tabbtn" onclick="showTab(event,'audit')">Audit</button><button class="tabbtn" onclick="showTab(event,'allocation')">Allocation</button><button class="tabbtn" onclick="showTab(event,'config')">Config</button></div>
+<div class="card" style="border-left:5px solid #17365d"><b>Returns shown are price return. Dividend income shown separately on the Dividend Income tab.</b><div class="note">Charts and metrics use raw closing prices. Tactical signals use adjusted closing prices.</div></div>
+<div class="tabs"><button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button><button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button><button class="tabbtn" onclick="showTab(event,'mwm')">MWM Static</button><button class="tabbtn" onclick="showTab(event,'tacticalmodels')">Tactical Models</button><button class="tabbtn" onclick="showTab(event,'signals')">Signals</button><button class="tabbtn" onclick="showTab(event,'holding')">Holding Analytics</button><button class="tabbtn" onclick="showTab(event,'trade')">Trade Log</button><button class="tabbtn" onclick="showTab(event,'chartaudit')">Chart Audit</button><button class="tabbtn" onclick="showTab(event,'audit')">Audit</button><button class="tabbtn" onclick="showTab(event,'dividend')">Dividend Income</button><button class="tabbtn" onclick="showTab(event,'allocation')">Allocation</button><button class="tabbtn" onclick="showTab(event,'config')">Config</button></div>
 <div class="controls"><b class="note">Period</b><span id="periodButtons"></span><span id="freqPill" class="pill">Display: Daily</span><span class="pill">Metrics use daily rows</span><span class="pill">Drawdown before downsample</span></div>
 <section id="overview" class="tab active"><div class="grid kpis" id="kpiBox"></div><div class="grid grid2"><div class="card"><h2>Primary Comparison</h2><div class="controls"><button onclick="preset('core')">Core</button><button onclick="preset('static')">MWM Static</button><button onclick="preset('tacticalmodels')">Tactical Models</button><button onclick="preset('all')">All</button></div><div id="overviewChecks" class="checks"></div><div class="chartbox"><canvas id="overviewChart"></canvas></div><div id="overviewLegend" class="legend"></div></div><div class="card"><h2>Current State &amp; Latest Trade</h2><div id="stateBox"></div><div id="latestTrade"></div></div></div><div class="card"><h2>Sortable Metrics</h2><div class="scroll"><table id="metricsTable"></table></div></div></section>
 <section id="tactical" class="tab"><div class="card"><h2>Tactical Sleeve — MGK / MGV Binary (v3.3)</h2><div class="chartbox"><canvas id="tacticalChart"></canvas></div><div id="tacticalLegend" class="legend"></div></div><div class="card"><h2>Tactical Drawdown</h2><div class="chartbox short"><canvas id="tacticalDD"></canvas></div><div id="tacticalDDLegend" class="legend"></div><div class="note">Daily drawdown computed before chart downsampling.</div></div><div class="card"><h2>Tactical Metrics</h2><div class="scroll"><table id="tacticalMetrics"></table></div></div></section>
@@ -669,19 +801,20 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 <section id="trade" class="tab"><div class="card"><h2>Trade Ledger</h2><div id="latestTrade2"></div><div class="scroll"><table id="tradeTable"></table></div></div></section>
 <section id="chartaudit" class="tab"><div class="card"><h2>Chart Audit</h2><div class="scroll"><table id="chartAuditTable"></table></div></div><div class="card"><h2>Chart Rules</h2><table><tr><th>Window</th><th>Display frequency</th><th>Calculation basis</th></tr><tr><td>YTD, 1Y, 2Y</td><td>Daily</td><td>Full daily values</td></tr><tr><td>&gt;2Y and &lt;8Y</td><td>Weekly, last trading observation of week</td><td>Full daily values</td></tr><tr><td>≥8Y or SI</td><td>Monthly, last trading observation of month</td><td>Full daily values</td></tr><tr><td>Drawdown</td><td>Downsample after drawdown is computed</td><td>Daily running peak first</td></tr></table></div></section>
 <section id="audit" class="tab"><div class="card"><h2>Metric Window Audit</h2><div id="windowAudit"></div><div class="scroll"><table id="windowRows"></table></div></div><div class="card"><h2>Production Audit</h2><div class="scroll"><table id="prodAuditTable"></table></div></div><div class="card"><h2>Data Audit</h2><div class="scroll"><table id="auditTable"></table></div></div></section>
+<section id="dividend" class="tab"><div class="card"><h2>Dividend Income</h2><div class="controls"><b class="note">Model</b><span id="divModelButtons"></span></div><div class="grid kpis" id="divKpis"></div><div class="grid grid2"><div><div class="chartbox"><canvas id="divChart"></canvas></div><div id="divLegend" class="legend"></div></div><div class="scroll"><table id="divAnnualTable"></table></div></div></div><div class="card"><h2>Income by Asset</h2><div class="scroll"><table id="divAssetTable"></table></div></div><div class="card"><h2>A1V12 Tactical Sleeve — Income by Holding Period</h2><div class="scroll"><table id="divPeriodTable"></table></div></div></section>
 <section id="allocation" class="tab"><div class="card"><h2>Model Allocation</h2><div class="controls"><b class="note">Model</b><span id="allocModelButtons"></span></div><div class="grid grid2"><div><div class="chartbox"><canvas id="allocPie"></canvas></div><div id="allocLegend" class="legend"></div></div><div class="scroll"><table id="allocTable"></table></div></div></div></section>
 <section id="config" class="tab"><div class="card"><h2>Backfill Scale Audit</h2><div class="note">Backfilled series are ratio-scaled to prevent artificial jumps at live/backfill transition dates.</div><div class="scroll"><table id="backfillAuditTable"></table></div></div><div class="card"><h2>Static to Tactical Model Map</h2><div class="scroll"><table id="modelMapTable"></table></div></div><div class="card"><h2>Normalized Allocation Config</h2><div class="scroll"><table id="allocationTable"></table></div></div></section>
 </div><script>
 const EMBEDDED=__PAYLOAD__;
 const colors=['#6d35c4','#15803d','#0057b8','#e11d1d','#17365d','#a16207','#0f766e','#1d4ed8','#be123c','#7c3aed','#2563eb','#ea580c'];
-const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date','End_Date','Asset','Production_Asset','State','EffectiveHolding','From','To','New_State','Rule','Status','Yahoo_Symbol','Notes','Check','Detail','Model','Static_Model','Tactical_Model','Chart','Series','Frequency']);
+const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date','End_Date','Asset','Production_Asset','State','EffectiveHolding','From','To','New_State','Rule','Status','Yahoo_Symbol','Notes','Check','Detail','Model','Static_Model','Tactical_Model','Chart','Series','Frequency','Holding','Through_Date']);
 let sortState={},tableData={},period='3Y',periods=['YTD','1Y','2Y','3Y','5Y','2018','2016','SI'],visible=[];
 function parseCSV(t){if(!t)return[];let L=t.trim().split(/\r?\n/);if(!L[0])return[];let H=L[0].split(',');return L.slice(1).filter(Boolean).map(l=>{let V=[],c='',q=false;for(let i=0;i<l.length;i++){let ch=l[i];if(ch=='"')q=!q;else if(ch==','&&!q){V.push(c);c=''}else c+=ch}V.push(c);let o={};H.forEach((h,i)=>{let v=V[i]??'',n=parseFloat(v);o[h]=(!STR.has(h)&&!isNaN(n)&&v.trim()!=='')?n:v});return o})}
-let tactical=parseCSV(EMBEDDED.tactical),portfolio=parseCSV(EMBEDDED.portfolio),signals=parseCSV(EMBEDDED.signals),trades=parseCSV(EMBEDDED.trades),holdsum=parseCSV(EMBEDDED.holdsum),holdperiods=parseCSV(EMBEDDED.holdperiods),audit=parseCSV(EMBEDDED.dataaudit),prodaudit=parseCSV(EMBEDDED.prodaudit),modelmap=parseCSV(EMBEDDED.modelmap),alloc=parseCSV(EMBEDDED.alloc),backfillaudit=parseCSV(EMBEDDED.backfillaudit);
+let tactical=parseCSV(EMBEDDED.tactical),portfolio=parseCSV(EMBEDDED.portfolio),signals=parseCSV(EMBEDDED.signals),trades=parseCSV(EMBEDDED.trades),holdsum=parseCSV(EMBEDDED.holdsum),holdperiods=parseCSV(EMBEDDED.holdperiods),audit=parseCSV(EMBEDDED.dataaudit),prodaudit=parseCSV(EMBEDDED.prodaudit),modelmap=parseCSV(EMBEDDED.modelmap),alloc=parseCSV(EMBEDDED.alloc),backfillaudit=parseCSV(EMBEDDED.backfillaudit),divsummary=parseCSV(EMBEDDED.divsummary),divannual=parseCSV(EMBEDDED.divannual),divasset=parseCSV(EMBEDDED.divasset),divperiods=parseCSV(EMBEDDED.divperiods);
 let bilSeries=tactical.filter(r=>isFinite(r['BIL Buy Hold'])).map(r=>({Date:r.Date,BIL:r['BIL Buy Hold']}));
 function riskFreeCAGR(startDateStr,endDateStr){if(!bilSeries.length)return 0;let start=new Date(startDateStr),end=new Date(endDateStr);let inRange=bilSeries.filter(r=>{let dt=new Date(r.Date);return dt>=start&&dt<=end});if(inRange.length<2)return 0;let yrs=(new Date(inRange.at(-1).Date)-new Date(inRange[0].Date))/86400000/365.25;if(!(yrs>0))return 0;let ratio=inRange.at(-1).BIL/inRange[0].BIL;if(!(ratio>0))return 0;return Math.pow(ratio,1/yrs)-1}
 function money(v){return isFinite(v)?'$'+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}):''}function pct(v){return isFinite(v)?(v*100).toFixed(2)+'%':''}function ratio(v){return isFinite(v)?v.toFixed(2):''}function num(v,d=2){return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):v||''}
-function fmt(h,v){if(v==null||v==='')return '';if(h.includes('Value')||h.includes('Price'))return money(v);if(h.includes('CAGR')||h.includes('Volatility')||h.includes('Drawdown')||h.includes('Return')||h.includes('Pct')||h.includes('Weight')||h.includes('Diff'))return pct(v);if(h.includes('Sharpe')||h.includes('Ratio'))return ratio(v);if(h.includes('Days'))return num(v,1);if(h.includes('Rows')||h.includes('Periods')||h.includes('Count'))return isFinite(v)?Math.round(v).toLocaleString():v;return isFinite(v)?num(v,2):v}
+function fmt(h,v){if(v==null||v==='')return '';if(h.includes('Value')||h.includes('Price')||h.includes('Income'))return money(v);if(h.includes('CAGR')||h.includes('Volatility')||h.includes('Drawdown')||h.includes('Return')||h.includes('Pct')||h.includes('Weight')||h.includes('Diff')||h.includes('Yield'))return pct(v);if(h.includes('Sharpe')||h.includes('Ratio'))return ratio(v);if(h.includes('Days'))return num(v,1);if(h.includes('Rows')||h.includes('Periods')||h.includes('Count'))return isFinite(v)?Math.round(v).toLocaleString():v;return isFinite(v)?num(v,2):v}
 function cls(h,v,row){let out='';if(h=='Status')out=v=='PASS'?'pass':(v=='FAIL'?'fail':'warn');else if(isFinite(v)){if(h.includes('Drawdown')||h.includes('Worst'))out='bad';else if(h.includes('CAGR')||h.includes('Sharpe')||h.includes('Return')||h.includes('Best'))out=v>=0?'good':'bad'}if(row&&row.__current)out+=' '+(row.State=='Value'?'state-value':'state-growth');return out}
 function sortVal(v){if(v==null||v==='')return null;if(typeof v==='number')return v;let s=String(v);if(/^\d{4}-\d{2}-\d{2}/.test(s)){let d=Date.parse(s);if(!isNaN(d))return d;}let n=parseFloat(s.replace(/[$,%]/g,''));if(!isNaN(n))return n;return s.toLowerCase()}
 function sortRows(id,h){let rows=tableData[id]||[],key=id+'|'+h,dir=sortState[key]=='asc'?'desc':'asc';sortState={};sortState[key]=dir;let sorted=[...rows].sort((a,b)=>{let av=sortVal(a[h]),bv=sortVal(b[h]);if(av==null&&bv==null)return 0;if(av==null)return 1;if(bv==null)return -1;if(av<bv)return dir=='asc'?-1:1;if(av>bv)return dir=='asc'?1:-1;return 0});drawTable(id,sorted)}
@@ -714,8 +847,12 @@ function allocForModel(m){let rows=alloc.filter(r=>r.Model===m);let byAsset={};r
 function setAllocModel(m){allocModel=m;document.querySelectorAll('#allocModelButtons button').forEach(b=>b.classList.toggle('active',b.textContent===m));renderAllocation()}
 function drawPie(id,rows){let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(300,box.clientWidth||400),hCss=Math.max(260,box.clientHeight||400),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);ctx.clearRect(0,0,wCss,hCss);ctx.font='11px Arial';if(!rows.length){ctx.fillText('No allocation data',30,40);return}let total=rows.reduce((a,r)=>a+r.Weight,0);if(!total){ctx.fillText('Allocation weights sum to zero',30,40);return}let cx=wCss/2,cy=hCss/2,r=Math.min(wCss,hCss)/2-20,start=-Math.PI/2;rows.forEach((row,i)=>{let slice=(row.Weight/total)*2*Math.PI;ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,start,start+slice);ctx.closePath();ctx.fillStyle=colors[i%colors.length];ctx.fill();ctx.strokeStyle='#ffffff';ctx.lineWidth=1.5;ctx.stroke();if(slice>0.14){let mid=start+slice/2;let lx=cx+Math.cos(mid)*r*0.65,ly=cy+Math.sin(mid)*r*0.65;ctx.fillStyle='#ffffff';ctx.font='bold 12px Arial';ctx.textAlign='center';ctx.fillText(pct(row.Weight/total),lx,ly+4);ctx.font='11px Arial'}start+=slice});ctx.textAlign='left'}
 function renderAllocation(){if(!allocModel){if(allocModels().length){allocModel=allocModels()[0]}else{return}}let rows=allocForModel(allocModel);let total=rows.reduce((a,r)=>a+r.Weight,0)||1;drawPie('allocPie',rows);let el=document.getElementById('allocLegend');if(el)el.innerHTML=rows.map((r,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${r.Asset} (${pct(r.Weight/total)})</span>`).join('');drawTable('allocTable',rows.map(r=>({Asset:r.Asset,Weight:r.Weight})))}
-function init(){document.getElementById('periodButtons').innerHTML=periods.map(p=>`<button onclick="setPeriod('${p}')" class="${p==period?'active':''}">${p}</button>`).join('');preset('core');staticTables();document.getElementById('allocModelButtons').innerHTML=allocModels().map(m=>`<button onclick="setAllocModel('${m}')">${m}</button>`).join('');if(allocModels().length)setAllocModel(allocModels()[0]);setTimeout(render,120);setTimeout(renderAllocation,120)}
-window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation()},120));init();
+let divModel=null;
+function divModels(){return divsummary.map(r=>r.Model)}
+function setDivModel(m){divModel=m;document.querySelectorAll('#divModelButtons button').forEach(b=>b.classList.toggle('active',b.textContent===m));renderDividend()}
+function renderDividend(){if(!divModel){if(divModels().length)divModel=divModels()[0];else return}let sum=divsummary.find(r=>r.Model===divModel)||{};let ann=divannual.filter(r=>r.Model===divModel).sort((a,b)=>a.Year-b.Year);let chart=ann.map(r=>({Date:String(r.Year)+'-12-31','Cumulative Income':r.Cumulative_Income,'Annual Income':r.Dividend_Income}));draw('divChart',chart,['Cumulative Income','Annual Income'],'divLegend');document.getElementById('divKpis').innerHTML=`<div class=kpi><div class=label>Lifetime Dividend Income</div><div class=big>${money(sum.Lifetime_Dividend_Income)}</div></div><div class=kpi><div class=label>Current Year Income</div><div class=big>${money(sum.Current_Year_Income)}</div></div><div class=kpi><div class=label>Trailing 12 Months</div><div class=big>${money(sum.TTM_Dividend_Income)}</div></div><div class=kpi><div class=label>Current-Year Yield on Cost</div><div class=big>${pct(sum.Current_Year_Yield_on_Cost)}</div></div>`;drawTable('divAnnualTable',ann);drawTable('divAssetTable',divasset.filter(r=>r.Model===divModel).sort((a,b)=>b.Year-a.Year||b.Dividend_Income-a.Dividend_Income));drawTable('divPeriodTable',divperiods.slice().reverse())}
+function init(){document.getElementById('periodButtons').innerHTML=periods.map(p=>`<button onclick="setPeriod('${p}')" class="${p==period?'active':''}">${p}</button>`).join('');preset('core');staticTables();document.getElementById('allocModelButtons').innerHTML=allocModels().map(m=>`<button onclick="setAllocModel('${m}')">${m}</button>`).join('');if(allocModels().length)setAllocModel(allocModels()[0]);document.getElementById('divModelButtons').innerHTML=divModels().map(m=>`<button onclick="setDivModel('${m.replace(/'/g,"\\'")}')">${m}</button>`).join('');if(divModels().length)setDivModel(divModels()[0]);setTimeout(render,120);setTimeout(renderAllocation,120);setTimeout(renderDividend,120)}
+window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation();renderDividend()},120));init();
 </script></body></html>"""
 
 
@@ -725,29 +862,35 @@ def main():
 
     alloc_df = read_allocations()
     static_models, tactical_models = build_model_configs(alloc_df)
-
-    # MGK, MGV, VOO, BIL are required by the tactical engine.
-    # JIVE is NOT required by the signal engine but is still downloaded
-    # via CORE_ASSETS for static model allocations that hold it.
     required_assets = set(alloc_df["Production_Asset"].unique()) | {"MGK", "MGV", "VOO", "BIL"}
 
-    wide, data_audit_df = download_prices(required_assets)
-    comp                = build_composites(wide, required_assets)
-    sig, trades         = build_signals(comp)
-    tv                  = build_tactical_values(comp, sig)
-    pv                  = build_portfolios(comp, tv, static_models, tactical_models)
-    build_holding_analytics(sig)
-    run_audit(alloc_df, static_models, tactical_models, comp, sig, trades, tv, pv, data_audit_df)
+    adj_wide, raw_wide, div_wide, data_audit_df = download_prices(required_assets)
+    comp_adj, _ = build_composites(adj_wide, required_assets,
+        output_name="Composite_Prices.csv", audit_name="Backfill_Scale_Audit.csv",
+        price_basis="Adjusted Close")
+    comp_raw, raw_scale = build_composites(raw_wide, required_assets,
+        output_name="Composite_Prices_Raw_Close.csv", audit_name="Backfill_Raw_Scale_Audit.csv",
+        price_basis="Raw Close")
+    div_comp = build_dividend_composites(div_wide, raw_scale, required_assets)
+
+    sig, trades = build_signals(comp_adj)
+    tv = build_tactical_values(comp_raw, sig)
+    pv = build_portfolios(comp_raw, tv, static_models, tactical_models)
+    build_holding_analytics(sig, comp_raw)
+    build_dividend_analytics(comp_raw, div_comp, sig, tv, static_models, tactical_models)
+    run_audit(alloc_df, static_models, tactical_models, comp_adj, comp_raw,
+              sig, trades, tv, pv, data_audit_df)
     dash = build_dashboard()
 
     print("\nA1V12 Yahoo Production v3.3 complete.")
-    print(f"Signal engine:   Binary MGK/MGV · EMA89 crossover · {COOLDOWN_DAYS}-day cooldown")
+    print(f"Signal engine:   Adjusted Close · Binary MGK/MGV · EMA89 crossover · {COOLDOWN_DAYS}-day cooldown")
+    print("Performance:     Raw Close price return")
+    print("Dividend income: Separate model-level cash-income reporting")
     print("Rebalancing:     Annual (Jan 1) for all multi-asset models")
     print("Static models:  ", ", ".join(static_models.keys()))
     print("Tactical models:", ", ".join(tactical_models.keys()))
     print("Latest data:    ", pv["Date"].max())
     print("Dashboard:      ", dash)
-
 
 if __name__ == "__main__":
     main()
