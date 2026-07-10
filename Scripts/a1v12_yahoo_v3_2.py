@@ -196,6 +196,10 @@ def download_prices(required_assets):
             if raw.empty:
                 audit.append([asset, sym, "FAIL", "", "", 0, "No data returned"])
                 continue
+            # yfinance may return MultiIndex columns (e.g. ('Adj Close','MGK'))
+            # even for single-ticker downloads — flatten before accessing.
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
             series = raw["Adj Close"] if "Adj Close" in raw.columns else raw["Close"]
             f = series.reset_index()
             f.columns = ["Date", asset]
