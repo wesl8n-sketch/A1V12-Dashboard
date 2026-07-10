@@ -431,8 +431,9 @@ def build_tactical_values(comp, sig):
 
     if anchor_rows:
         anchors_df = pd.DataFrame(anchor_rows)
-        tv = pd.concat([tv, anchors_df], ignore_index=True
-                       ).sort_values("Date").reset_index(drop=True)
+        tv = pd.concat([tv, anchors_df], ignore_index=True)
+        tv["Date"] = pd.to_datetime(tv["Date"])
+        tv = tv.sort_values("Date").reset_index(drop=True)
 
     tv.to_csv(DATA / "Tactical_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return tv
@@ -542,8 +543,9 @@ def build_portfolios(comp, tv, static_models, tactical_models):
 
     if anchor_rows:
         anchors_df = pd.DataFrame(anchor_rows)
-        vals = pd.concat([vals, anchors_df], ignore_index=True
-                         ).sort_values("Date").reset_index(drop=True)
+        vals = pd.concat([vals, anchors_df], ignore_index=True)
+        vals["Date"] = pd.to_datetime(vals["Date"]).dt.strftime("%Y-%m-%d")
+        vals = vals.sort_values("Date").reset_index(drop=True)
 
     vals.to_csv(DATA / "Portfolio_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return vals
