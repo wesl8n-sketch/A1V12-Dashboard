@@ -5,9 +5,20 @@ A1V12 Yahoo Production v3.4 (Raw-Close Performance + Dividend Income)
 Complete integrated package.
 
 Production methodology:
-- Charts, NAV, metrics, and drawdowns use raw Close prices.
-- Tactical signals use Adjusted Close prices.
-- Dividend income is calculated separately at full model level.
+- Tactical sleeve (MGK/MGV) and fixed-income mutual funds (PIMIX,
+  FIWDX, FIKQX, JBND, JPIE): raw Close for NAV/charts/metrics.
+  Dividends reported separately via the dividend engine.
+- Equity ETFs and diversified funds: Adjusted Close (total return).
+  Distributions reinvested via adj-close pricing.
+- Tactical signals: Adjusted Close for MGK/MGV ratio (unchanged).
+- RAW_CLOSE_ASSETS constant controls which assets use raw close.
+
+v3.4.3 patch:
+- RAW_CLOSE_ASSETS expanded to include PIMIX, FIWDX, FIKQX, JBND, JPIE
+  and their backfill proxies. Yahoo adj-close retroactively reduces all
+  prior prices by each distribution paid, making early share counts and
+  income artificially high. Raw close avoids this; distributions are
+  captured separately by the dividend engine for all RAW_CLOSE_ASSETS.
 
 v3.4.2 patch:
 - build_portfolios() mixed price basis: raw Close for MGK/MGV/TACTICAL;
@@ -958,7 +969,7 @@ def run_audit(alloc_df, static_models, tactical_models,
     def add(name, status, detail): checks.append([name, status, detail])
 
     add("Performance price basis", "PASS",
-        "Mixed: raw Close for MGK/MGV/TACTICAL; Adj Close (total return) for all other assets")
+        "Mixed: raw Close for MGK/MGV/TACTICAL + PIMIX/FIWDX/FIKQX/JBND/JPIE; Adj Close for equity ETFs")
     add("Signal price basis",      "PASS", "Yahoo Adjusted Close for MGK/MGV ratio and EMA89")
     add("Dividend treatment",      "PASS", "Cash distributions reported separately; not reinvested in price-return NAV")
     add("Allocation file",         "PASS", "Config/MWM_Allocations.csv")
@@ -1042,8 +1053,8 @@ DASHBOARD_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name
 <style>
 body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width:1680px;margin:auto;padding:18px}h1{color:#17365d;margin:0}.sub{color:#64748b;font-size:13px}.card{background:white;border:1px solid #d7deea;border-radius:13px;padding:14px;margin:12px 0}.tabs,.controls,.checks{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:8px 11px;font-weight:700;cursor:pointer}button.active{background:#17365d;color:white}.tab{display:none}.tab.active{display:block}.grid{display:grid;gap:12px}.grid2{grid-template-columns:2fr 1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.kpi{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}.label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800}.big{font-size:22px;font-weight:900}.chartbox{height:430px;width:100%;border:1px solid #eef2f7;border-radius:10px;background:white}.chartbox.short{height:300px}canvas{width:100%;height:100%;display:block}.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;margin-top:10px}.sw{width:18px;height:4px;border-radius:2px;display:inline-block;margin-right:5px}.scroll{max-height:560px;overflow:auto;border:1px solid #eef2f7;border-radius:10px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #e5e7eb;padding:7px;text-align:right;white-space:nowrap}th{background:#f3f4f6;position:sticky;top:0;cursor:pointer;z-index:2}td:first-child,th:first-child{text-align:left}.freeze1{position:sticky;left:0;background:white;z-index:1;min-width:120px}.freeze2{position:sticky;left:120px;background:white;z-index:1;min-width:90px}.freeze3{position:sticky;left:210px;background:white;z-index:1;min-width:180px}.good{color:#15803d;font-weight:800}.bad{color:#b91c1c;font-weight:800}.pass{color:#15803d;font-weight:900}.fail{color:#b91c1c;font-weight:900}.warn{color:#a16207;font-weight:900}.note{font-size:12px;color:#64748b}.pill{display:inline-block;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;font-weight:700}.state-growth{background:#ecfdf5}.state-value{background:#eff6ff}.tradebox{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tradeitem{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
 </style></head><body><div class="wrap">
-<h1>A1V12 Yahoo Production v3.4</h1><div class="sub">Binary MGK/MGV tactical sleeve · Sleeve: raw-close · Other assets: total return (adj-close) · Dividends reported separately</div>
-<div class="card" style="border-left:5px solid #17365d"><b>Tactical sleeve (MGK/MGV): price return (raw close). All other assets: total return (adj-close, distributions reinvested). Dividend income shown separately on the Dividend Income tab.</b><div class="note">Tactical signals use adjusted closing prices. Charts and metrics use raw closing prices. Open-price execution on trade dates.</div></div>
+<h1>A1V12 Yahoo Production v3.4</h1><div class="sub">Binary MGK/MGV tactical sleeve · Sleeve + fixed-income: raw-close · Equity/diversified: total return (adj-close) · Dividends reported separately</div>
+<div class="card" style="border-left:5px solid #17365d"><b>Tactical sleeve (MGK/MGV) and fixed-income funds (PIMIX, FIWDX, FIKQX, JBND, JPIE): price return (raw close); dividends reported separately. Equity and diversified funds: total return (adj-close, distributions reinvested). See Dividend Income tab.</b><div class="note">Tactical signals use adjusted closing prices. Charts and metrics use raw closing prices. Open-price execution on trade dates.</div></div>
 <div class="tabs">
 <button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button>
 <button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button>
