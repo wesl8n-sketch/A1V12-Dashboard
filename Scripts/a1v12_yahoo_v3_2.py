@@ -526,24 +526,15 @@ def build_tactical_values(comp_close, comp_open, sig):
 
 def build_portfolios(comp, tv, static_models, tactical_models):
     """
-    Compute daily NAV for all models.
+    Compute raw-close price-return NAV and write the exact daily share ledger
+    used by the NAV engine.
 
-    Rebalancing policy
-    ------------------
-    Single-asset models ("A1V12 Tactical Sleeve", "VOO Benchmark") are
-    computed with continuous daily blending — rebalancing has no meaning
-    when there is only one holding.
-
-    All multi-asset models (MWM Static and Tactical Models) use ANNUAL
-    rebalancing: holdings drift with daily price changes throughout the
-    year and are reset to target weights on the first trading day of each
-    new calendar year.  Rebalancing is applied at the open (i.e. before
-    that day's returns are applied), consistent with a Jan 1 rebalance
-    instruction executed at the following market open.
+    The dividend engine reads this ledger directly. It does not recreate or
+    estimate portfolio shares independently.
     """
     import pandas as pd
+    import numpy as np
 
-    # Models whose rebalancing is meaningless (single effective asset)
     NO_REBALANCE = {"A1V12 Tactical Sleeve", "VOO Benchmark"}
 
     all_models = {
@@ -555,82 +546,92 @@ def build_portfolios(comp, tv, static_models, tactical_models):
 
     df = comp.merge(tv[["Date", "A1V12"]], on="Date", how="inner"
                     ).sort_values("Date").reset_index(drop=True)
-    # Ensure portfolio NAV starts from PORTFOLIO_START — comp includes
-    # pre-history dates for EMA warmup that must not appear in output.
     df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
+    df["TACTICAL"] = df["A1V12"]
 
-    ret = pd.DataFrame({"Date": df["Date"],
-                        "TACTICAL": df["A1V12"].pct_change().fillna(0),
-                        "A1V12":    df["A1V12"].pct_change().fillna(0)})
-    for a in [c for c in df.columns if c != "Date"]:
-        ret[a] = df[a].pct_change().fillna(0)
-
-    dates    = df["Date"].values
-    n_rows   = len(df)
-    vals     = pd.DataFrame({"Date": df["Date"]})
+    vals = pd.DataFrame({"Date": df["Date"]})
+    ledger_rows = []
 
     for name, weights in all_models.items():
-
-        # Normalise asset key (TACTICAL alias)
         keyed = {
-            ("TACTICAL" if a in {"TACTICAL", "A1V12"} else a): w
+            ("TACTICAL" if a in {"TACTICAL", "A1V12"} else a): float(w)
             for a, w in weights.items()
         }
-        # Keep only assets that exist in the return frame
-        keyed = {k: w for k, w in keyed.items() if k in ret.columns}
-        if not keyed:
+        keyed = {k: w for k, w in keyed.items() if k in df.columns}
+        total_w = sum(keyed.values())
+        if not keyed or total_w <= 0:
             continue
+        keyed = {k: w / total_w for k, w in keyed.items()}
 
-        if name in NO_REBALANCE or len(keyed) == 1:
-            # ── Continuous daily blend (single-asset or excluded) ──────────
-            v = [BASE_VALUE]
-            for i in range(1, n_rows):
-                dr = sum(w * ret.loc[i, k] for k, w in keyed.items())
-                v.append(v[-1] * (1 + dr))
-            vals[name] = v
+        # Initialize exact shares from the first raw-close price.
+        shares = {}
+        for asset, weight in keyed.items():
+            px = float(df.loc[0, asset])
+            if np.isfinite(px) and px > 0:
+                shares[asset] = BASE_VALUE * weight / px
 
-        else:
-            # ── Annual rebalancing ─────────────────────────────────────────
-            # Initialise dollar holdings at target weights
-            holdings = {k: BASE_VALUE * w for k, w in keyed.items()}
-            nav      = [BASE_VALUE]
-            cur_year = pd.Timestamp(dates[0]).year
+        nav = []
+        cur_year = pd.Timestamp(df.loc[0, "Date"]).year
 
-            for i in range(1, n_rows):
-                yr = pd.Timestamp(dates[i]).year
+        for i in range(len(df)):
+            dt = pd.Timestamp(df.loc[i, "Date"])
 
-                # First trading day of a new year → rebalance before returns
-                if yr != cur_year:
-                    total = sum(holdings.values())
-                    holdings = {k: total * w for k, w in keyed.items()}
-                    cur_year = yr
+            # Match the original NAV convention: rebalance on the first trading
+            # day of a new year using the prior trading day's raw close.
+            if (i > 0 and name not in NO_REBALANCE and len(shares) > 1
+                    and dt.year != cur_year):
+                prev_i = i - 1
+                total_value = sum(
+                    sh * float(df.loc[prev_i, asset])
+                    for asset, sh in shares.items()
+                    if pd.notna(df.loc[prev_i, asset])
+                )
+                new_shares = {}
+                for asset, weight in keyed.items():
+                    px = float(df.loc[prev_i, asset])
+                    if np.isfinite(px) and px > 0:
+                        new_shares[asset] = total_value * weight / px
+                shares = new_shares
+                cur_year = dt.year
 
-                # Apply that day's returns to each holding
-                for k in holdings:
-                    holdings[k] *= (1.0 + ret.loc[i, k])
+            total = 0.0
+            for asset, sh in shares.items():
+                px = float(df.loc[i, asset])
+                value = sh * px if np.isfinite(px) else 0.0
+                total += value
+                ledger_rows.append({
+                    "Date": dt,
+                    "Model": name,
+                    "Asset": asset,
+                    "Shares": sh,
+                    "Raw_Close": px,
+                    "Position_Value": value,
+                })
+            nav.append(total)
 
-                nav.append(sum(holdings.values()))
+        vals[name] = nav
 
-            vals[name] = nav
+    ledger = pd.DataFrame(ledger_rows)
+    ledger.to_csv(DATA / "Portfolio_Daily_Share_Ledger.csv",
+                  index=False, date_format="%Y-%m-%d")
 
-    # Add single prior year-end anchor so YTD rebases from Dec 31 close.
+    # Preserve the existing YTD anchor behavior in the displayed NAV file.
     dates_ts = pd.to_datetime(vals["Date"])
-    latest_yr2 = dates_ts.dt.year.max()
-    prior_yr2  = latest_yr2 - 1
-    prior_mask2 = dates_ts.dt.year == prior_yr2
-    if prior_mask2.any():
-        last_prior2 = vals[prior_mask2].iloc[-1].copy()
-        last_prior2_date = pd.to_datetime(last_prior2["Date"])
-        if not (last_prior2_date.month == 12 and last_prior2_date.day == 31):
-            anchor2 = last_prior2.copy()
-            anchor2["Date"] = pd.Timestamp(prior_yr2, 12, 31).strftime("%Y-%m-%d")
-            vals = pd.concat([vals, pd.DataFrame([anchor2])], ignore_index=True)
-            vals["Date"] = pd.to_datetime(vals["Date"]).dt.strftime("%Y-%m-%d")
+    latest_yr = dates_ts.dt.year.max()
+    prior_yr = latest_yr - 1
+    prior_mask = dates_ts.dt.year == prior_yr
+    if prior_mask.any():
+        last_prior = vals[prior_mask].iloc[-1].copy()
+        last_prior_date = pd.to_datetime(last_prior["Date"])
+        if not (last_prior_date.month == 12 and last_prior_date.day == 31):
+            anchor = last_prior.copy()
+            anchor["Date"] = pd.Timestamp(prior_yr, 12, 31)
+            vals = pd.concat([vals, pd.DataFrame([anchor])], ignore_index=True)
             vals = vals.sort_values("Date").reset_index(drop=True)
 
-    vals.to_csv(DATA / "Portfolio_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
-    return vals
-
+    vals.to_csv(DATA / "Portfolio_Daily_Values.csv",
+                index=False, date_format="%Y-%m-%d")
+    return vals, ledger
 
 def build_holding_analytics(sig, comp_raw):
     import pandas as pd
@@ -662,16 +663,19 @@ def build_holding_analytics(sig, comp_raw):
     hs.to_csv(DATA / "Holding_Summary.csv", index=False)
 
 def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
-                             static_models, tactical_models):
+                             portfolio_ledger, static_models, tactical_models):
     """
-    Calculate dividend income with an explicit security-value + cash ledger.
+    Compute dividends directly from the exact daily shares produced by the
+    price-return NAV engine.
 
-    Raw-close price return remains separate. Dividends are recorded as cash
-    income and reinvested at the distribution-date raw close in the income
-    ledger. Annual model rebalances then use the resulting security values.
+        daily income = shares in NAV ledger × dividend per share
 
-    Also writes monthly model/asset income and a fixed-income verification
-    table for PIMIX, JPIE, FIWDX, and JBND.
+    No second portfolio share ledger is maintained.
+
+    For the synthetic TACTICAL asset, a separate underlying MGK/MGV ledger is
+    built using the same next-day-open execution rule as build_tactical_values.
+    Its daily income is converted to dividend per synthetic A1V12 unit and then
+    applied to each model's TACTICAL shares from Portfolio_Daily_Share_Ledger.
     """
     import pandas as pd
     import numpy as np
@@ -693,27 +697,21 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
     hold = hold.merge(prices[["Date"]], on="Date", how="right")
     hold["EffectiveHolding"] = hold["EffectiveHolding"].ffill().bfill()
 
-    # Standalone tactical sleeve dividend ledger.
-    tactical_daily_income = np.zeros(len(prices))
+    # Exact underlying tactical share ledger, matching next-day-open execution.
     current = str(hold.loc[0, "EffectiveHolding"])
-    shares = BASE_VALUE / float(prices.loc[0, current])
-    cash_balance = 0.0
+    underlying_shares = BASE_VALUE / float(prices.loc[0, current])
+    synthetic_units = BASE_VALUE / float(prices.loc[0, "A1V12"])
+    tactical_dps = np.zeros(len(prices))
+    period_rows = []
     period_start = 0
     period_income = 0.0
-    period_rows = []
 
     for i in range(len(prices)):
         new_h = str(hold.loc[i, "EffectiveHolding"])
-
         dps = float(divs.loc[i, current]) if current in divs.columns else 0.0
-        income = shares * dps
-        tactical_daily_income[i] = income
+        income = underlying_shares * dps
+        tactical_dps[i] = income / synthetic_units if synthetic_units else 0.0
         period_income += income
-        # Reinvest each distribution at the distribution-date raw close so the
-        # share ledger represents a continuously invested economic account.
-        close_px = float(prices.loc[i, current])
-        if income and np.isfinite(close_px) and close_px > 0:
-            shares += income / close_px
 
         if i > 0 and new_h != current:
             period_rows.append({
@@ -729,8 +727,8 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
                     f"Missing tactical Open price on {prices.loc[i, 'Date']} "
                     f"for {current}->{new_h}"
                 )
-            account_value = shares * old_open
-            shares = account_value / new_open
+            security_value = underlying_shares * old_open
+            underlying_shares = security_value / new_open
             current = new_h
             period_start = i
             period_income = 0.0
@@ -745,236 +743,147 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
         DATA / "Dividend_Holding_Periods.csv", index=False, date_format="%Y-%m-%d"
     )
 
-    # Create a synthetic tactical dividend-per-unit series for model blending.
-    synthetic_units = BASE_VALUE / float(prices.loc[0, "A1V12"])
-    prices["TACTICAL"] = prices["A1V12"]
-    divs["TACTICAL"] = tactical_daily_income / synthetic_units
-    divs["A1V12"] = divs["TACTICAL"]
-
-    all_models = {
-        "VOO Benchmark": {"VOO": 1.0},
-        "A1V12 Tactical Sleeve": {"TACTICAL": 1.0},
-    }
-    all_models.update(static_models)
-    all_models.update(tactical_models)
-
-    no_rebalance = {"VOO Benchmark", "A1V12 Tactical Sleeve"}
-    annual_rows, monthly_rows, asset_rows, summary_rows, coverage_rows = [], [], [], [], []
-
-    last_date = pd.to_datetime(prices["Date"].iloc[-1])
-    ttm_start = last_date - pd.DateOffset(years=1)
-    current_year = int(last_date.year)
-    days_elapsed = max(int(last_date.dayofyear), 1)
-    year_days = 366 if last_date.is_leap_year else 365
-    annualization_factor = year_days / days_elapsed
-
-    used_assets = sorted({
-        ("TACTICAL" if a in {"TACTICAL", "A1V12"} else a)
-        for weights in all_models.values() for a in weights
+    tactical_div = pd.DataFrame({
+        "Date": prices["Date"],
+        "TACTICAL": tactical_dps,
     })
+    divs = divs.merge(tactical_div, on="Date", how="left", suffixes=("", "_new"))
+    if "TACTICAL_new" in divs.columns:
+        divs["TACTICAL"] = divs["TACTICAL_new"].fillna(0.0)
+        divs = divs.drop(columns=["TACTICAL_new"])
 
+    ledger = portfolio_ledger.copy()
+    ledger["Date"] = pd.to_datetime(ledger["Date"])
+
+    # Long dividend-per-share table.
+    div_long = divs.melt(id_vars=["Date"], var_name="Asset",
+                         value_name="Dividend_Per_Share")
+    div_long["Dividend_Per_Share"] = pd.to_numeric(
+        div_long["Dividend_Per_Share"], errors="coerce").fillna(0.0)
+
+    income = ledger.merge(div_long, on=["Date", "Asset"], how="left")
+    income["Dividend_Per_Share"] = income["Dividend_Per_Share"].fillna(0.0)
+    income["Dividend_Income"] = income["Shares"] * income["Dividend_Per_Share"]
+    income["Year"] = income["Date"].dt.year
+    income["Month"] = income["Date"].dt.to_period("M").astype(str)
+
+    # Keep only actual distribution events in the detailed ledger.
+    events = income[income["Dividend_Income"].abs() > 1e-12].copy()
+    events.to_csv(DATA / "Dividend_Daily_Income_Ledger.csv",
+                  index=False, date_format="%Y-%m-%d")
+
+    annual = income.groupby(["Model", "Year"], as_index=False)["Dividend_Income"].sum()
+    annual = annual.sort_values(["Model", "Year"])
+    annual["Cumulative_Income"] = annual.groupby("Model")["Dividend_Income"].cumsum()
+
+    last_date = pd.to_datetime(income["Date"].max())
+    current_year = int(last_date.year)
+    annual["Is_Partial_Year"] = np.where(
+        annual["Year"].eq(current_year), "YES", "NO")
+    annual["Period"] = annual["Year"].astype(str)
+    annual.loc[annual["Year"].eq(current_year), "Period"] = (
+        str(current_year) + " YTD through " + str(last_date.date())
+    )
+    annual.to_csv(DATA / "Dividend_Model_Annual.csv", index=False)
+
+    monthly = income.groupby(["Model", "Month"], as_index=False)["Dividend_Income"].sum()
+    monthly = monthly.sort_values(["Model", "Month"])
+    monthly["Cumulative_Income"] = monthly.groupby("Model")["Dividend_Income"].cumsum()
+    monthly.to_csv(DATA / "Dividend_Model_Monthly.csv", index=False)
+
+    asset_annual = income.groupby(
+        ["Model", "Year", "Asset"], as_index=False)["Dividend_Income"].sum()
+    asset_monthly = income.groupby(
+        ["Model", "Month", "Asset"], as_index=False)["Dividend_Income"].sum()
+    asset_annual.to_csv(DATA / "Dividend_Asset_Annual.csv", index=False)
+    asset_monthly.to_csv(DATA / "Dividend_Asset_Monthly.csv", index=False)
+
+    # Summary KPIs.
+    ttm_start = last_date - pd.DateOffset(years=1)
+    summary_rows = []
+    for model, g in income.groupby("Model"):
+        summary_rows.append({
+            "Model": model,
+            "Lifetime_Dividend_Income": float(g["Dividend_Income"].sum()),
+            "Current_Year_Income": float(
+                g.loc[g["Date"].dt.year.eq(current_year), "Dividend_Income"].sum()),
+            "Prior_Full_Year_Income": float(
+                g.loc[g["Date"].dt.year.eq(current_year - 1), "Dividend_Income"].sum()),
+            "TTM_Dividend_Income": float(
+                g.loc[g["Date"] > ttm_start, "Dividend_Income"].sum()),
+            "Through_Date": last_date,
+        })
+    pd.DataFrame(summary_rows).to_csv(
+        DATA / "Dividend_Model_Summary.csv", index=False, date_format="%Y-%m-%d"
+    )
+
+    # Coverage audit.
+    coverage_rows = []
+    used_assets = sorted(ledger["Asset"].unique())
     for asset in used_assets:
-        series = pd.to_numeric(divs[asset], errors="coerce").fillna(0.0) if asset in divs.columns else pd.Series(0.0, index=divs.index)
-        mask = series.abs() > 1e-12
+        s = div_long.loc[div_long["Asset"].eq(asset), "Dividend_Per_Share"]
+        mask = s.abs() > 1e-12
         coverage_rows.append({
             "Asset": asset,
             "Status": "PASS" if mask.any() else "WARN",
             "Distribution_Count": int(mask.sum()),
-            "First_Distribution_Date": prices.loc[mask, "Date"].min() if mask.any() else "",
-            "Last_Distribution_Date": prices.loc[mask, "Date"].max() if mask.any() else "",
-            "Total_DPS": float(series.sum()),
+            "Total_DPS": float(s.sum()),
             "Detail": "Distribution events found" if mask.any()
                       else "No distributions found; verify this is expected",
         })
+    pd.DataFrame(coverage_rows).to_csv(
+        AUDIT / "Dividend_Coverage_Audit.csv", index=False
+    )
 
-    for model, weights in all_models.items():
-        keyed = {
-            ("TACTICAL" if a in {"TACTICAL", "A1V12"} else a): float(w)
-            for a, w in weights.items()
-        }
-        keyed = {a: w for a, w in keyed.items() if a in prices.columns}
-        total_w = sum(keyed.values())
-        if not keyed or total_w <= 0:
-            continue
-        keyed = {a: w / total_w for a, w in keyed.items()}
-
-        shares_by_asset = {}
-        for asset, weight in keyed.items():
-            px0 = float(prices.loc[0, asset])
-            if np.isfinite(px0) and px0 > 0:
-                shares_by_asset[asset] = BASE_VALUE * weight / px0
-
-        daily_rows = []
-        cur_year = int(prices.loc[0, "Date"].year)
-
-        for i in range(len(prices)):
-            dt = pd.to_datetime(prices.loc[i, "Date"])
-
-            # Rebalance the full economic account: securities + accumulated cash.
-            if (i > 0 and model not in no_rebalance and len(keyed) > 1
-                    and dt.year != cur_year):
-                prev_i = i - 1
-                security_value = sum(
-                    sh * float(prices.loc[prev_i, asset])
-                    for asset, sh in shares_by_asset.items()
-                    if pd.notna(prices.loc[prev_i, asset])
-                )
-                total_value = security_value
-                shares_by_asset = {
-                    asset: total_value * weight / float(prices.loc[prev_i, asset])
-                    for asset, weight in keyed.items()
-                    if pd.notna(prices.loc[prev_i, asset])
-                    and float(prices.loc[prev_i, asset]) > 0
-                }
-                cur_year = dt.year
-
-            day_total = 0.0
-            for asset, sh in shares_by_asset.items():
-                dps = float(divs.loc[i, asset]) if asset in divs.columns else 0.0
-                income = sh * dps
-                if abs(income) > 1e-12:
-                    asset_rows.append({
-                        "Model": model,
-                        "Date": dt,
-                        "Month": dt.strftime("%Y-%m"),
-                        "Year": int(dt.year),
-                        "Asset": asset,
-                        "Dividend_Income": income,
-                    })
-                day_total += income
-
-            # Record cash income, then reinvest it into the distributing asset
-            # at that day's raw close. This keeps future shares and income from
-            # shrinking after distributions while price-return charts remain raw-close.
-            for asset, sh in list(shares_by_asset.items()):
-                dps = float(divs.loc[i, asset]) if asset in divs.columns else 0.0
-                income = sh * dps
-                close_px = float(prices.loc[i, asset]) if asset in prices.columns else float("nan")
-                if income and np.isfinite(close_px) and close_px > 0:
-                    shares_by_asset[asset] += income / close_px
-            daily_rows.append((dt, day_total))
-
-        ddf = pd.DataFrame(daily_rows, columns=["Date", "Dividend_Income"])
-        yearly = ddf.groupby(ddf["Date"].dt.year)["Dividend_Income"].sum()
-        monthly = ddf.groupby(ddf["Date"].dt.to_period("M"))["Dividend_Income"].sum()
-
-        cumulative = 0.0
-        for yr, income in yearly.items():
-            income = float(income)
-            cumulative += income
-            partial = int(yr) == current_year and not (last_date.month == 12 and last_date.day == 31)
-            annual_rows.append({
-                "Model": model,
-                "Year": int(yr),
-                "Period": f"{int(yr)} YTD through {last_date.date()}" if partial else str(int(yr)),
-                "Dividend_Income": income,
-                "Cumulative_Income": cumulative,
-                "Annualized_Run_Rate": income * annualization_factor if partial else income,
-                "Is_Partial_Year": "YES" if partial else "NO",
-            })
-
-        running = 0.0
-        for month, income in monthly.items():
-            income = float(income)
-            running += income
-            monthly_rows.append({
-                "Model": model,
-                "Month": str(month),
-                "Dividend_Income": income,
-                "Cumulative_Income": running,
-            })
-
-        total_income = float(ddf["Dividend_Income"].sum())
-        ttm_income = float(ddf.loc[ddf["Date"] > ttm_start, "Dividend_Income"].sum())
-        current_income = float(yearly.get(current_year, 0.0))
-        summary_rows.append({
-            "Model": model,
-            "Lifetime_Dividend_Income": total_income,
-            "Current_Year_Income": current_income,
-            "Current_Year_Annualized_Run_Rate": current_income * annualization_factor,
-            "TTM_Dividend_Income": ttm_income,
-            "Through_Date": last_date,
-        })
-
-    annual_df = pd.DataFrame(annual_rows)
-    monthly_df = pd.DataFrame(monthly_rows)
-    asset_df = pd.DataFrame(asset_rows)
-    summary_df = pd.DataFrame(summary_rows)
-    coverage_df = pd.DataFrame(coverage_rows)
-
-    annual_df.to_csv(DATA / "Dividend_Model_Annual.csv", index=False)
-    monthly_df.to_csv(DATA / "Dividend_Model_Monthly.csv", index=False)
-
-    if not asset_df.empty:
-        asset_monthly = asset_df.groupby(
-            ["Model", "Month", "Asset"], as_index=False
-        )["Dividend_Income"].sum()
-        asset_annual = asset_df.groupby(
-            ["Model", "Year", "Asset"], as_index=False
-        )["Dividend_Income"].sum()
-        asset_monthly.to_csv(DATA / "Dividend_Asset_Monthly.csv", index=False)
-        asset_annual.to_csv(DATA / "Dividend_Asset_Annual.csv", index=False)
-    else:
-        pd.DataFrame(columns=["Model","Month","Asset","Dividend_Income"]).to_csv(
-            DATA / "Dividend_Asset_Monthly.csv", index=False)
-        pd.DataFrame(columns=["Model","Year","Asset","Dividend_Income"]).to_csv(
-            DATA / "Dividend_Asset_Annual.csv", index=False)
-
-    # Per-$100,000 monthly verification for the four requested income funds.
+    # Fixed-income monthly verification on a static $100,000 initial investment.
     verify_rows = []
-    verify_assets = ["PIMIX", "JPIE", "FIWDX", "JBND"]
-    for asset in verify_assets:
+    for asset in ["PIMIX", "JPIE", "FIWDX", "JBND"]:
         if asset not in prices.columns or asset not in divs.columns:
             continue
-        first_valid = prices[asset].first_valid_index()
-        if first_valid is None:
+        first = prices[asset].first_valid_index()
+        if first is None:
             continue
-        shares_100k = BASE_VALUE / float(prices.loc[first_valid, asset])
+        sh = BASE_VALUE / float(prices.loc[first, asset])
         tmp = pd.DataFrame({
             "Date": prices["Date"],
-            "Price": pd.to_numeric(prices[asset], errors="coerce"),
             "DPS": pd.to_numeric(divs[asset], errors="coerce").fillna(0.0),
         })
-        tmp["Income_on_100k"] = shares_100k * tmp["DPS"]
         tmp["Month"] = tmp["Date"].dt.to_period("M").astype(str)
-        for month, g in tmp.groupby("Month"):
-            dps = float(g["DPS"].sum())
-            income = float(g["Income_on_100k"].sum())
-            if abs(dps) > 1e-12:
-                verify_rows.append({
-                    "Asset": asset,
-                    "Month": month,
-                    "Dividend_Per_Share": dps,
-                    "Income_on_100k_Initial_Investment": income,
-                })
+        tmp["Income_on_100k_Initial_Investment"] = sh * tmp["DPS"]
+        out = tmp.groupby("Month", as_index=False).agg(
+            Dividend_Per_Share=("DPS", "sum"),
+            Income_on_100k_Initial_Investment=(
+                "Income_on_100k_Initial_Investment", "sum")
+        )
+        out.insert(0, "Asset", asset)
+        out = out[out["Dividend_Per_Share"].abs() > 1e-12]
+        verify_rows.append(out)
 
-    pd.DataFrame(verify_rows).to_csv(
-        DATA / "Fixed_Income_Monthly_Verification.csv", index=False
-    )
-    summary_df.to_csv(
-        DATA / "Dividend_Model_Summary.csv", index=False, date_format="%Y-%m-%d"
-    )
-    coverage_df.to_csv(
-        AUDIT / "Dividend_Coverage_Audit.csv", index=False, date_format="%Y-%m-%d"
-    )
+    verify = pd.concat(verify_rows, ignore_index=True) if verify_rows else pd.DataFrame(
+        columns=["Asset","Month","Dividend_Per_Share",
+                 "Income_on_100k_Initial_Investment"])
+    verify.to_csv(DATA / "Fixed_Income_Monthly_Verification.csv", index=False)
 
-    # Production sanity audit: flag extreme unexplained income collapse.
+    # Sanity audit: recent full-year income should not collapse without a
+    # corresponding collapse in model NAV or income-producing allocation.
     sanity_rows = []
-    for model, g in annual_df.groupby("Model"):
-        full = g[g["Is_Partial_Year"] == "NO"].sort_values("Year")
-        if len(full) >= 5:
-            early = float(full.head(3)["Dividend_Income"].median())
-            recent = float(full.tail(3)["Dividend_Income"].median())
-            ratio = recent / early if early else float("nan")
-            status = "PASS" if (not np.isfinite(ratio) or ratio >= 0.35) else "FAIL"
-            sanity_rows.append({
-                "Model": model, "Early_3Y_Median": early,
-                "Recent_3Y_Median": recent, "Recent_to_Early_Ratio": ratio,
-                "Status": status,
-                "Detail": "Income history plausible" if status == "PASS" else
-                          "Annual income collapsed below 35% of early-period median"
-            })
-    pd.DataFrame(sanity_rows).to_csv(AUDIT / "Dividend_Income_Sanity_Audit.csv", index=False)
+    for model, g in annual.groupby("Model"):
+        full = g[g["Year"] < current_year].sort_values("Year")
+        if len(full) < 3:
+            continue
+        early = float(full.head(min(3, len(full)))["Dividend_Income"].median())
+        recent = float(full.tail(min(3, len(full)))["Dividend_Income"].median())
+        ratio = recent / early if early else np.nan
+        sanity_rows.append({
+            "Model": model,
+            "Early_Median_Income": early,
+            "Recent_Median_Income": recent,
+            "Recent_to_Early_Ratio": ratio,
+            "Status": "PASS" if (not np.isfinite(ratio) or ratio >= 0.35) else "FAIL",
+        })
+    pd.DataFrame(sanity_rows).to_csv(
+        AUDIT / "Dividend_Income_Sanity_Audit.csv", index=False
+    )
 
 def run_audit(alloc_df, static_models, tactical_models, comp_adj, comp_raw, sig, trades, tv, pv, data_audit_df):
     import pandas as pd
@@ -1064,7 +973,7 @@ def build_dashboard():
     required = [
         'id="divAnnualChart"',
         'id="divCumulativeChart"',
-        "Annualized YTD Run Rate",
+        "Prior Full-Year Income",
         "Yield on cost is intentionally not displayed",
     ]
     missing = [token for token in required if token not in html]
@@ -1106,8 +1015,8 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 <section id="audit" class="tab"><div class="card"><h2>Metric Window Audit</h2><div id="windowAudit"></div><div class="scroll"><table id="windowRows"></table></div></div><div class="card"><h2>Production Audit</h2><div class="scroll"><table id="prodAuditTable"></table></div></div><div class="card"><h2>Data Audit</h2><div class="scroll"><table id="auditTable"></table></div></div></section>
 <section id="dividend" class="tab">
 <div class="card">
-  <h2>Dividend Income <span class="pill">Income engine v6 verified</span></h2>
-  <div class="note">Cash distributions are recorded separately from raw-close price return and reinvested at the distribution-date raw close in the income ledger. Yield on cost is intentionally not displayed.</div>
+  <h2>Dividend Income <span class="pill">Income engine v7 NAV-ledger verified</span></h2>
+  <div class="note">Cash distributions are calculated directly from the exact daily shares used by the raw-close NAV engine. Yield on cost is intentionally not displayed.</div>
   <div class="controls"><b class="note">Model</b><span id="divModelButtons"></span></div>
   <div class="grid kpis" id="divKpis"></div>
 </div>
@@ -1188,7 +1097,7 @@ function renderDividend(){
     `<div class=kpi><div class=label>Lifetime Dividend Income</div><div class=big>${money(sum.Lifetime_Dividend_Income)}</div></div>`+
     `<div class=kpi><div class=label>Current Year Income</div><div class=big>${money(sum.Current_Year_Income)}</div><div class=note>YTD through ${through}</div></div>`+
     `<div class=kpi><div class=label>Trailing 12 Months</div><div class=big>${money(sum.TTM_Dividend_Income)}</div></div>`+
-    `<div class=kpi><div class=label>Annualized YTD Run Rate</div><div class=big>${money(sum.Current_Year_Annualized_Run_Rate)}</div><div class=note>Illustrative run rate, not a forecast</div></div>`;
+    `<div class=kpi><div class=label>Prior Full-Year Income</div><div class=big>${money(sum.Prior_Full_Year_Income)}</div><div class=note>Completed calendar year</div></div>`;
 
   let annualRows=ann.map(r=>({
     Model:r.Model,
@@ -1210,7 +1119,7 @@ window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation()
 
 
 def main():
-    print("BUILD MARKER: dividend-engine-v4-open-price-guarded")
+    print("BUILD MARKER: dividend-engine-v7-nav-share-ledger")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
 
@@ -1232,9 +1141,9 @@ def main():
 
     sig, trades = build_signals(comp_adj)
     tv = build_tactical_values(comp_raw, comp_open, sig)
-    pv = build_portfolios(comp_raw, tv, static_models, tactical_models)
+    pv, portfolio_ledger = build_portfolios(comp_raw, tv, static_models, tactical_models)
     build_holding_analytics(sig, comp_raw)
-    build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv, static_models, tactical_models)
+    build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv, portfolio_ledger, static_models, tactical_models)
     run_audit(alloc_df, static_models, tactical_models, comp_adj, comp_raw,
               sig, trades, tv, pv, data_audit_df)
     dash = build_dashboard()
