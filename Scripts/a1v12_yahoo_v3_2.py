@@ -286,13 +286,47 @@ def download_prices(required_assets):
         print(f"Downloading {asset} ({sym})...")
         try:
             # ── Price history ───────────────────────────────────────────
+            # Use yf.download() for price data — more reliable for long
+            # date ranges than Ticker.history() which may silently truncate
+            # to 5 years when auto_adjust=False on newer yfinance versions.
+            raw_dl = yf.download(sym, start=START_DATE, auto_adjust=False,
+                                 progress=False, threads=False)
+            if raw_dl.empty and asset == "DXY":
+                raw_dl = yf.download("^DXY", start=START_DATE, auto_adjust=False,
+                                     progress=False, threads=False)
+            if isinstance(raw_dl.columns, pd.MultiIndex):
+                raw_dl.columns = raw_dl.columns.get_level_values(0)
+
+            # Also fetch history() for dividends (actions=True)
+            # but use download() prices as the authoritative source
             hist = yf.Ticker(sym).history(
                 start=START_DATE, auto_adjust=False, actions=True, repair=False
             )
-            if hist.empty and asset == "DXY":
-                hist = yf.Ticker("^DXY").history(
-                    start=START_DATE, auto_adjust=False, actions=True, repair=False
-                )
+            if isinstance(hist.columns, pd.MultiIndex):
+                hist.columns = hist.columns.get_level_values(0)
+
+            # If download() returned more history, prefer it for prices
+            if not raw_dl.empty and (hist.empty or len(raw_dl) > len(hist)):
+                # Build a combined frame: prices from raw_dl, dividends from hist
+                hist_prices = raw_dl.copy()
+                if not hist.empty and "Dividends" in hist.columns:
+                    hist_idx = pd.to_datetime(hist.index)
+                    if getattr(hist_idx, "tz", None) is not None:
+                        hist_idx = hist_idx.tz_localize(None)
+                    hist_idx = hist_idx.normalize()
+                    div_series = pd.Series(
+                        hist["Dividends"].values,
+                        index=hist_idx
+                    )
+                    dl_idx = pd.to_datetime(raw_dl.index).normalize()
+                    hist_prices.index = dl_idx
+                    hist_prices["Dividends"] = div_series.reindex(dl_idx).fillna(0.0)
+                else:
+                    dl_idx = pd.to_datetime(raw_dl.index).normalize()
+                    hist_prices.index = dl_idx
+                    hist_prices["Dividends"] = 0.0
+                hist = hist_prices
+
             if hist.empty:
                 audit.append([asset, sym, "FAIL", "", "", 0, "No data returned"])
                 continue
