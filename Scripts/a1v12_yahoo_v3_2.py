@@ -1058,6 +1058,35 @@ def _latest_prices_json():
         return "{}"
 
 
+def _dividend_history_json():
+    """
+    Return a JSON array of {Asset, Ex_Date, Div_Per_Share} objects
+    from Dividend_Master_Wide.csv (written by download_prices()).
+    Includes only rows where the dividend is positive.
+    Used by the dashboard trailingYield() function:
+        yield = sum(last 4 payments) / current price
+    """
+    import json as _json
+    p = DATA / "Dividend_Master_Wide.csv"
+    if not p.exists():
+        return "[]"
+    try:
+        import pandas as pd
+        wide = pd.read_csv(p, parse_dates=["Date"])
+        wide = wide[wide["Date"] >= pd.to_datetime(PORTFOLIO_START)]
+        # Melt to long format
+        long = wide.melt(id_vars=["Date"], var_name="Asset",
+                         value_name="Div_Per_Share")
+        long = long[long["Div_Per_Share"].abs() > 1e-12].copy()
+        long["Ex_Date"] = long["Date"].dt.strftime("%Y-%m-%d")
+        long = long[["Asset", "Ex_Date", "Div_Per_Share"]].sort_values(
+            ["Asset", "Ex_Date"])
+        return _json.dumps(long.to_dict(orient="records"))
+    except Exception as e:
+        print(f"  WARNING: _dividend_history_json() failed: {e}")
+        return "[]"
+
+
 def build_dashboard():
     payload = {
         "tactical":          csv_payload("Tactical_Daily_Values.csv"),
@@ -1080,7 +1109,7 @@ def build_dashboard():
         "fixedincomeverify": csv_payload("Fixed_Income_Monthly_Verification.csv"),  # FIX: was missing
         # Asset price and dividend history for industry-standard yield calculation
         # yield = sum(last 4 dividends) / current price
-        "divhistory":        csv_payload("Dividend_History.csv"),
+        "divhistory":        _dividend_history_json(),
         "assetprices":       _latest_prices_json(),
     }
     html = DASHBOARD_HTML.replace("__PAYLOAD__", json.dumps(payload))
@@ -1145,7 +1174,7 @@ const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date'
 let sortState={},tableData={},period='3Y',periods=['YTD','1Y','2Y','3Y','5Y','2018','2016','SI'],visible=[];
 function parseCSV(t){if(!t)return[];let L=t.trim().split(/\r?\n/);if(!L[0])return[];let H=L[0].split(',');return L.slice(1).filter(Boolean).map(l=>{let V=[],c='',q=false;for(let i=0;i<l.length;i++){let ch=l[i];if(ch=='"')q=!q;else if(ch==','&&!q){V.push(c);c=''}else c+=ch}V.push(c);let o={};H.forEach((h,i)=>{let v=V[i]??'',n=parseFloat(v);o[h]=(!STR.has(h)&&!isNaN(n)&&v.trim()!=='')?n:v});return o})}
 let tactical=parseCSV(EMBEDDED.tactical),portfolio=parseCSV(EMBEDDED.portfolio),signals=parseCSV(EMBEDDED.signals),trades=parseCSV(EMBEDDED.trades),holdsum=parseCSV(EMBEDDED.holdsum),holdperiods=parseCSV(EMBEDDED.holdperiods),audit=parseCSV(EMBEDDED.dataaudit),prodaudit=parseCSV(EMBEDDED.prodaudit),modelmap=parseCSV(EMBEDDED.modelmap),alloc=parseCSV(EMBEDDED.alloc),backfillaudit=parseCSV(EMBEDDED.backfillaudit);
-let divsummary=parseCSV(EMBEDDED.divsummary||''),divannual=parseCSV(EMBEDDED.divannual||''),divasset=parseCSV(EMBEDDED.divasset||''),divperiods=parseCSV(EMBEDDED.divperiods||''),divhistory=parseCSV(EMBEDDED.divhistory||'');
+let divsummary=parseCSV(EMBEDDED.divsummary||''),divannual=parseCSV(EMBEDDED.divannual||''),divasset=parseCSV(EMBEDDED.divasset||''),divperiods=parseCSV(EMBEDDED.divperiods||''),divhistory=(()=>{try{return JSON.parse(EMBEDDED.divhistory||'[]')}catch(e){return []}})();
 const assetprices=(()=>{try{return JSON.parse(EMBEDDED.assetprices||'{}')}catch(e){return {}}})()
 // trailingYield(asset): sum of last 4 dividend payments / current price
 function trailingYield(asset){
