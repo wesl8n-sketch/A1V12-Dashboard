@@ -298,28 +298,29 @@ def _ensure_workbook_in_config():
     if target.exists():
         return  # already in place
 
-    candidates = [
-        # Exact filename committed to Config/ in GitHub repo
-        PROJECT / "Config" / "Master_workbook_BackfilledPre2016.xlsx",
-        # Alternate names / locations
-        PROJECT / "Config" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
-        PROJECT / "Master_workbook_BackfilledPre2016.xlsx",
-        PROJECT / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
-        PROJECT / "Data" / "Master_workbook_BackfilledPre2016.xlsx",
-        PROJECT.parent / "Master_workbook_BackfilledPre2016.xlsx",
+    # Search for any xlsx in Config/ that looks like the price workbook
+    # (contains 'workbook' or 'backfill' in the name, case-insensitive)
+    import glob, shutil as _shutil
+    search_dirs = [
+        CONFIG,
+        PROJECT,
+        PROJECT.parent,
+        DATA,
     ]
-    for src in candidates:
-        if src.exists():
-            import shutil
-            target.parent.mkdir(exist_ok=True)
-            shutil.copy2(src, target)
-            print(f"  Workbook copied: {src.name} → {target}")
-            return
+    for search_dir in search_dirs:
+        if not search_dir.exists():
+            continue
+        for xlsx in search_dir.glob("*.xlsx"):
+            name_lower = xlsx.name.lower()
+            if any(k in name_lower for k in ("workbook", "backfill", "pre2016")):
+                target.parent.mkdir(exist_ok=True)
+                _shutil.copy2(xlsx, target)
+                print(f"  Workbook found and copied: {xlsx} → {target}")
+                return
 
-    print("  WARNING: Backfilled workbook not found in any expected location.")
+    print("  WARNING: Backfilled workbook not found.")
+    print(f"  Searched: {[str(d) for d in search_dirs]}")
     print("  Price history will be limited to Yahoo's available range.")
-    print("  To fix: commit Master_workbook_Portfolio_BackfilledPre2016.xlsx")
-    print("  to the repo root or Config/ folder.")
 
 
 def _load_workbook_prices():
@@ -333,18 +334,20 @@ def _load_workbook_prices():
 
     wb_path = PROJECT / WORKBOOK_FILE
     if not wb_path.exists():
-        # Try alternate filenames and locations
-        for candidate in [
-            PROJECT / "Config" / "Master_workbook_BackfilledPre2016.xlsx",
-            PROJECT / "Config" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
-            PROJECT / "Master_workbook_BackfilledPre2016.xlsx",
-            PROJECT / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
-            PROJECT.parent / "Master_workbook_BackfilledPre2016.xlsx",
-        ]:
-            if candidate.exists():
-                wb_path = candidate
+        # Glob search — any xlsx with workbook/backfill in name
+        found = False
+        for search_dir in [CONFIG, PROJECT, PROJECT.parent, DATA]:
+            if not search_dir.exists():
+                continue
+            for xlsx in search_dir.glob("*.xlsx"):
+                if any(k in xlsx.name.lower() for k in ("workbook","backfill","pre2016")):
+                    wb_path = xlsx
+                    found = True
+                    print(f"  Found workbook via search: {xlsx}")
+                    break
+            if found:
                 break
-        else:
+        if not found:
             print("  WARNING: Backfilled workbook not found — falling back to Yahoo-only mode")
             return {}
 
@@ -785,8 +788,19 @@ def build_tactical_values(comp_raw, comp_open, sig):
     df = df.dropna(subset=["MGK","MGV","VOO"]).sort_values("Date").reset_index(drop=True)
     df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
 
-    val  = BASE_VALUE
-    rows = [[df.loc[0, "Date"], val, df.loc[0, "EffectiveHolding"]]]
+    # Track shares rather than price ratios to ensure NAV continuity
+    # across asset switches. On a trade day:
+    #   1. Value of old holding at trade-day open = shares * old_open
+    #   2. Buy new holding at same open price = same dollar value
+    #   3. New shares = trade_value / new_open
+    # This keeps NAV continuous through switches regardless of
+    # the price ratio between the two assets.
+
+    h0    = df.loc[0, "EffectiveHolding"]
+    p0    = float(df.loc[0, h0])
+    shares = BASE_VALUE / p0 if p0 > 0 else 0.0
+    val    = BASE_VALUE
+    rows   = [[df.loc[0, "Date"], val, h0]]
 
     for i in range(1, len(df)):
         prev  = df.iloc[i - 1]
@@ -795,18 +809,34 @@ def build_tactical_values(comp_raw, comp_open, sig):
         new_h = cur["EffectiveHolding"]
 
         if new_h == old_h:
-            val *= cur[new_h] / prev[old_h]
+            # Same holding — update value from new close price
+            px_new = float(cur[new_h])
+            px_old = float(prev[old_h])
+            if px_old > 0:
+                val = shares * px_new
         else:
+            # Trade day — sell old at open, buy new at open
             old_open = cur.get(f"{old_h}__OPEN", float("nan"))
             new_open = cur.get(f"{new_h}__OPEN", float("nan"))
+            px_old_prev = float(prev[old_h])
+
             if not (np.isfinite(old_open) and np.isfinite(new_open) and new_open > 0):
-                # FIX: fallback to prior close instead of hard crash
-                print(f"  WARNING: missing Open on {cur['Date'].date()} for {old_h}->{new_h}; "
-                      f"using prior close as fallback")
-                val *= cur[new_h] / prev[old_h]
+                # Fallback: use prior close → current close (no open available)
+                print(f"  WARNING: missing Open on {cur['Date'].date()} for "
+                      f"{old_h}->{new_h}; using close-to-close fallback")
+                trade_value = shares * float(cur[new_h]) if px_old_prev == 0 else                               shares * px_old_prev * float(cur[new_h]) / px_old_prev
+                # Keep NAV continuous: sell old at prev close, buy new at cur close
+                trade_value = shares * px_old_prev if px_old_prev > 0 else val
+                px_new_close = float(cur[new_h])
+                shares = trade_value / px_new_close if px_new_close > 0 else shares
+                val = shares * px_new_close
             else:
-                val *= old_open / prev[old_h]
-                val *= cur[new_h] / new_open
+                # Sell old at open: trade_value = shares * old_open
+                trade_value = shares * old_open
+                # Buy new at open: new_shares = trade_value / new_open
+                shares = trade_value / new_open
+                # End-of-day value: new_shares * new_close
+                val = shares * float(cur[new_h])
 
         rows.append([cur["Date"], val, new_h])
 
