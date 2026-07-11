@@ -666,10 +666,9 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
     """
     Calculate dividend income with an explicit security-value + cash ledger.
 
-    Raw-close price return remains separate. Dividends are added to cash.
-    Cash is included at the next annual model rebalance and at tactical
-    switches, preventing the invested base from shrinking simply because
-    securities distributed cash.
+    Raw-close price return remains separate. Dividends are recorded as cash
+    income and reinvested at the distribution-date raw close in the income
+    ledger. Annual model rebalances then use the resulting security values.
 
     Also writes monthly model/asset income and a fixed-income verification
     table for PIMIX, JPIE, FIWDX, and JBND.
@@ -709,8 +708,12 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
         dps = float(divs.loc[i, current]) if current in divs.columns else 0.0
         income = shares * dps
         tactical_daily_income[i] = income
-        cash_balance += income
         period_income += income
+        # Reinvest each distribution at the distribution-date raw close so the
+        # share ledger represents a continuously invested economic account.
+        close_px = float(prices.loc[i, current])
+        if income and np.isfinite(close_px) and close_px > 0:
+            shares += income / close_px
 
         if i > 0 and new_h != current:
             period_rows.append({
@@ -726,9 +729,8 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
                     f"Missing tactical Open price on {prices.loc[i, 'Date']} "
                     f"for {current}->{new_h}"
                 )
-            account_value = shares * old_open + cash_balance
+            account_value = shares * old_open
             shares = account_value / new_open
-            cash_balance = 0.0
             current = new_h
             period_start = i
             period_income = 0.0
@@ -802,7 +804,6 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
             if np.isfinite(px0) and px0 > 0:
                 shares_by_asset[asset] = BASE_VALUE * weight / px0
 
-        cash_balance = 0.0
         daily_rows = []
         cur_year = int(prices.loc[0, "Date"].year)
 
@@ -818,14 +819,13 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
                     for asset, sh in shares_by_asset.items()
                     if pd.notna(prices.loc[prev_i, asset])
                 )
-                total_value = security_value + cash_balance
+                total_value = security_value
                 shares_by_asset = {
                     asset: total_value * weight / float(prices.loc[prev_i, asset])
                     for asset, weight in keyed.items()
                     if pd.notna(prices.loc[prev_i, asset])
                     and float(prices.loc[prev_i, asset]) > 0
                 }
-                cash_balance = 0.0
                 cur_year = dt.year
 
             day_total = 0.0
@@ -843,7 +843,15 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
                     })
                 day_total += income
 
-            cash_balance += day_total
+            # Record cash income, then reinvest it into the distributing asset
+            # at that day's raw close. This keeps future shares and income from
+            # shrinking after distributions while price-return charts remain raw-close.
+            for asset, sh in list(shares_by_asset.items()):
+                dps = float(divs.loc[i, asset]) if asset in divs.columns else 0.0
+                income = sh * dps
+                close_px = float(prices.loc[i, asset]) if asset in prices.columns else float("nan")
+                if income and np.isfinite(close_px) and close_px > 0:
+                    shares_by_asset[asset] += income / close_px
             daily_rows.append((dt, day_total))
 
         ddf = pd.DataFrame(daily_rows, columns=["Date", "Dividend_Income"])
@@ -949,6 +957,24 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
     coverage_df.to_csv(
         AUDIT / "Dividend_Coverage_Audit.csv", index=False, date_format="%Y-%m-%d"
     )
+
+    # Production sanity audit: flag extreme unexplained income collapse.
+    sanity_rows = []
+    for model, g in annual_df.groupby("Model"):
+        full = g[g["Is_Partial_Year"] == "NO"].sort_values("Year")
+        if len(full) >= 5:
+            early = float(full.head(3)["Dividend_Income"].median())
+            recent = float(full.tail(3)["Dividend_Income"].median())
+            ratio = recent / early if early else float("nan")
+            status = "PASS" if (not np.isfinite(ratio) or ratio >= 0.35) else "FAIL"
+            sanity_rows.append({
+                "Model": model, "Early_3Y_Median": early,
+                "Recent_3Y_Median": recent, "Recent_to_Early_Ratio": ratio,
+                "Status": status,
+                "Detail": "Income history plausible" if status == "PASS" else
+                          "Annual income collapsed below 35% of early-period median"
+            })
+    pd.DataFrame(sanity_rows).to_csv(AUDIT / "Dividend_Income_Sanity_Audit.csv", index=False)
 
 def run_audit(alloc_df, static_models, tactical_models, comp_adj, comp_raw, sig, trades, tv, pv, data_audit_df):
     import pandas as pd
@@ -1080,8 +1106,8 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 <section id="audit" class="tab"><div class="card"><h2>Metric Window Audit</h2><div id="windowAudit"></div><div class="scroll"><table id="windowRows"></table></div></div><div class="card"><h2>Production Audit</h2><div class="scroll"><table id="prodAuditTable"></table></div></div><div class="card"><h2>Data Audit</h2><div class="scroll"><table id="auditTable"></table></div></div></section>
 <section id="dividend" class="tab">
 <div class="card">
-  <h2>Dividend Income <span class="pill">Income engine v5 monthly verified</span></h2>
-  <div class="note">Cash distributions are recorded separately from raw-close price return. Cash is carried and included at the next annual rebalance or tactical switch. Yield on cost is intentionally not displayed.</div>
+  <h2>Dividend Income <span class="pill">Income engine v6 verified</span></h2>
+  <div class="note">Cash distributions are recorded separately from raw-close price return and reinvested at the distribution-date raw close in the income ledger. Yield on cost is intentionally not displayed.</div>
   <div class="controls"><b class="note">Model</b><span id="divModelButtons"></span></div>
   <div class="grid kpis" id="divKpis"></div>
 </div>
