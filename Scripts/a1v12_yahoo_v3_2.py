@@ -299,10 +299,14 @@ def _ensure_workbook_in_config():
         return  # already in place
 
     candidates = [
-        PROJECT / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
-        PROJECT / "Data" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
-        PROJECT.parent / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+        # Exact filename committed to Config/ in GitHub repo
+        PROJECT / "Config" / "Master_workbook_BackfilledPre2016.xlsx",
+        # Alternate names / locations
         PROJECT / "Config" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+        PROJECT / "Master_workbook_BackfilledPre2016.xlsx",
+        PROJECT / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+        PROJECT / "Data" / "Master_workbook_BackfilledPre2016.xlsx",
+        PROJECT.parent / "Master_workbook_BackfilledPre2016.xlsx",
     ]
     for src in candidates:
         if src.exists():
@@ -329,11 +333,13 @@ def _load_workbook_prices():
 
     wb_path = PROJECT / WORKBOOK_FILE
     if not wb_path.exists():
-        # Try Config/ subfolder with original filename
+        # Try alternate filenames and locations
         for candidate in [
-            PROJECT / "Config" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
             PROJECT / "Config" / "Master_workbook_BackfilledPre2016.xlsx",
-            PROJECT.parent / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+            PROJECT / "Config" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+            PROJECT / "Master_workbook_BackfilledPre2016.xlsx",
+            PROJECT / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+            PROJECT.parent / "Master_workbook_BackfilledPre2016.xlsx",
         ]:
             if candidate.exists():
                 wb_path = candidate
