@@ -9,6 +9,17 @@ Production methodology:
 - Tactical signals use Adjusted Close prices.
 - Dividend income is calculated separately at full model level.
 
+v3.4.1 patch:
+- download_prices() now uses yf.Ticker.dividends (dedicated endpoint)
+  for mutual funds (PIMIX, FIWDX, FIKQX, JBND, JPIE and their backfill
+  proxies). Yahoo's history(actions=True) silently omits many monthly
+  distributions for open-end mutual funds. Both endpoints are now fetched
+  and merged (per-date maximum kept) so no distribution event is lost.
+  This fixes the incorrect declining-income pattern seen in conservative
+  model dividend reports.
+- MUTUAL_FUNDS constant added at module level.
+- _clean_div_series() helper added for safe normalisation of both endpoints.
+
 v3.4 changes from v3.3:
 - Raw-close price return for all NAV / charts / metrics.
 - Open-price execution: trade-day return split at open (old holding
@@ -172,10 +183,60 @@ def build_model_configs(alloc_df):
     return static, tactical
 
 
+# Assets that pay monthly distributions via NAV accrual (mutual funds).
+# Yahoo's history(actions=True) frequently under-reports these distributions.
+# The dedicated .dividends endpoint returns more complete distribution history.
+MUTUAL_FUNDS = {"PIMIX", "FIWDX", "FIKQX", "JBND", "JPIE",
+                "JMSIX", "WOBDX", "FSRIX", "FGBPX"}
+
+
+def _clean_div_series(raw_divs, asset, sym):
+    """
+    Normalise a raw dividend Series from yfinance into a clean
+    (Date -> float) Series with tz stripped and index normalised.
+    Returns an empty Series on failure.
+    """
+    import pandas as pd
+    try:
+        if raw_divs is None or len(raw_divs) == 0:
+            return pd.Series(dtype=float, name=asset)
+        s = raw_divs.copy()
+        if isinstance(s.index, pd.MultiIndex):
+            s.index = s.index.get_level_values(0)
+        s.index = pd.to_datetime(s.index)
+        if getattr(s.index, "tz", None) is not None:
+            s.index = s.index.tz_localize(None)
+        s.index = s.index.normalize()
+        s = pd.to_numeric(s, errors="coerce").fillna(0.0)
+        s = s[s.index >= pd.to_datetime(START_DATE)]
+        s.name = asset
+        return s
+    except Exception as e:
+        print(f"  WARNING: could not clean dividend series for {asset} ({sym}): {e}")
+        return pd.Series(dtype=float, name=asset)
+
+
 def download_prices(required_assets):
-    """Download Open, raw Close, Adjusted Close, and cash distributions."""
+    """
+    Download Open, raw Close, Adjusted Close, and cash distributions.
+
+    Dividend capture strategy
+    -------------------------
+    ETFs and index funds  →  Ticker.history(actions=True)
+        The Dividends column from history() is reliable for exchange-traded
+        products that declare dividends on a regular schedule.
+
+    Mutual funds (MUTUAL_FUNDS set)  →  Ticker.dividends
+        Yahoo's history() endpoint frequently omits or zeros monthly
+        distributions for open-end mutual funds (PIMIX, FIWDX, FIKQX,
+        JBND, JPIE and their backfill proxies).  The dedicated .dividends
+        property returns the complete distribution history for these funds.
+        Both sources are fetched; the per-date maximum is kept so that
+        any distributions captured by either method are preserved.
+    """
     ensure("pandas"); ensure("numpy"); ensure("yfinance")
     import pandas as pd
+    import numpy as np
     import yfinance as yf
 
     all_assets = sorted(set(required_assets) | set(CORE_ASSETS) | set(RESEARCH_ASSETS))
@@ -187,6 +248,7 @@ def download_prices(required_assets):
         sym = YMAP.get(asset, asset)
         print(f"Downloading {asset} ({sym})...")
         try:
+            # ── Price history ───────────────────────────────────────────
             hist = yf.Ticker(sym).history(
                 start=START_DATE, auto_adjust=False, actions=True, repair=False
             )
@@ -209,10 +271,31 @@ def download_prices(required_assets):
             open_px = pd.to_numeric(hist.get("Open"),    errors="coerce")
             close   = pd.to_numeric(hist.get("Close"),   errors="coerce")
             adj     = pd.to_numeric(hist.get("Adj Close", hist.get("Close")), errors="coerce")
-            div     = pd.to_numeric(
-                hist.get("Dividends", pd.Series(0.0, index=hist.index)),
-                errors="coerce"
-            ).fillna(0.0)
+
+            # ── Dividend capture ────────────────────────────────────────
+            # Step 1: dividends embedded in history() Dividends column
+            hist_div = _clean_div_series(
+                hist.get("Dividends", pd.Series(0.0, index=hist.index)), asset, sym)
+
+            # Step 2: dedicated .dividends endpoint — always fetch for
+            # mutual funds; optionally for ETFs as a cross-check
+            ded_div = pd.Series(dtype=float, name=asset)
+            if asset in MUTUAL_FUNDS:
+                try:
+                    raw = yf.Ticker(sym).dividends
+                    ded_div = _clean_div_series(raw, asset, sym)
+                    print(f"  {asset}: dedicated .dividends → "
+                          f"{(ded_div.abs() > 1e-12).sum()} events")
+                except Exception as de:
+                    print(f"  WARNING: .dividends failed for {asset}: {de}")
+
+            # Step 3: merge both sources — keep per-date maximum so
+            # neither source silently loses a distribution event
+            combined = pd.concat([hist_div, ded_div]).groupby(level=0).max().fillna(0.0)
+            combined.name = asset
+
+            # Align dividend series to the same date index as price history
+            div_aligned = combined.reindex(idx, fill_value=0.0)
 
             def frame(series, col):
                 f = pd.DataFrame({"Date": idx, col: series.values})
@@ -222,16 +305,19 @@ def download_prices(required_assets):
             raw_frames.append(frame(close,   asset))
             open_frames.append(frame(open_px, asset))
             div_frames.append(
-                pd.DataFrame({"Date": idx, asset: div.values})
+                pd.DataFrame({"Date": idx, asset: div_aligned.values})
                 .drop_duplicates("Date", keep="last")
             )
 
-            div_count = int((div.abs() > 1e-12).sum())
+            div_count = int((div_aligned.abs() > 1e-12).sum())
+            ded_count = int((ded_div.abs() > 1e-12).sum()) if len(ded_div) else 0
             audit.append([asset, sym, "OK",
                           frame(close, asset)["Date"].min().date().isoformat(),
                           frame(close, asset)["Date"].max().date().isoformat(),
                           len(frame(close, asset)),
-                          f"Open+Raw+Adj; {div_count} div events"])
+                          f"Open+Raw+Adj; {div_count} div events "
+                          f"(hist:{div_count - ded_count if ded_count else div_count} "
+                          f"ded:{ded_count})"])
         except Exception as e:
             audit.append([asset, sym, "ERROR", "", "", 0, str(e)])
 
@@ -249,12 +335,12 @@ def download_prices(required_assets):
     open_wide = merge_frames(open_frames)
     div_wide  = merge_frames(div_frames).fillna(0.0)
 
-    adj_wide.to_csv(DATA / "Price_Master_Wide.csv",                 index=False, date_format="%Y-%m-%d")
+    adj_wide.to_csv(DATA / "Price_Master_Wide.csv",           index=False, date_format="%Y-%m-%d")
     adj_wide.melt(id_vars=["Date"], var_name="Asset", value_name="Adj_Close").dropna().to_csv(
         DATA / "Price_Master_Long.csv", index=False, date_format="%Y-%m-%d")
-    raw_wide.to_csv(DATA / "Price_Master_Raw_Close_Wide.csv",       index=False, date_format="%Y-%m-%d")
-    open_wide.to_csv(DATA / "Price_Master_Open_Wide.csv",           index=False, date_format="%Y-%m-%d")
-    div_wide.to_csv(DATA / "Dividend_Master_Wide.csv",              index=False, date_format="%Y-%m-%d")
+    raw_wide.to_csv(DATA / "Price_Master_Raw_Close_Wide.csv", index=False, date_format="%Y-%m-%d")
+    open_wide.to_csv(DATA / "Price_Master_Open_Wide.csv",     index=False, date_format="%Y-%m-%d")
+    div_wide.to_csv(DATA / "Dividend_Master_Wide.csv",        index=False, date_format="%Y-%m-%d")
 
     audit_df = pd.DataFrame(
         audit,
