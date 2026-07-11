@@ -13,6 +13,17 @@ Production methodology:
 - Tactical signals: Adjusted Close for MGK/MGV ratio (unchanged).
 - RAW_CLOSE_ASSETS = {MGK, MGV, TACTICAL, A1V12} only.
 
+v3.4.5 patch:
+- Workbook-first price sourcing: MGK, MGV, BIL, VEU, JIVE, AVUV, VOO
+  are now loaded from Master_workbook_Portfolio_BackfilledPre2016.xlsx
+  (committed to repo Config/ folder) which provides full history back
+  to 2007. Yahoo gap-fills only the last ~30 days from workbook cutoff
+  to today. This fixes the Yahoo server-side 5-year truncation that was
+  causing portfolio NAV to start from Sep 2021 instead of Jan 2011,
+  inflating the 5Y return to 234% instead of the correct ~100%.
+- _load_workbook_prices() and _ensure_workbook_in_config() helpers added.
+- WORKBOOK_SOURCES and WORKBOOK_FILE module constants added.
+
 v3.4.4 patch:
 - Confirmed RAW_CLOSE_ASSETS = tactical sleeve only (MGK, MGV, TACTICAL).
   Goal: non-tactical graphs show buy-and-hold total return matching what
@@ -134,6 +145,27 @@ COOLDOWN_DAYS = 3
 # PIMIX +22% in 2012, +11% in 2025 — consistent with Yahoo Finance total return.
 RAW_CLOSE_ASSETS = {"MGK", "MGV", "TACTICAL", "A1V12"}
 
+# Workbook price sources — assets whose full price history is read from the
+# local Excel workbook (backfilled to 2007) rather than Yahoo Finance.
+# Yahoo is used only to extend from the workbook cutoff to today (~30 days).
+# This ensures the tactical sleeve and primary allocation assets always have
+# the full 15+ year history regardless of Yahoo's server-side truncation.
+#
+# Tuple: (sheet_name, close_col, adj_col, open_col_or_None)
+# Workbook path resolved relative to Config/ folder at runtime.
+WORKBOOK_SOURCES = {
+    "MGK": ("MGK Daily 29MAY",  "MGK Close",   "MGK Adj. Close",  "MGK Open"),
+    "MGV": ("MGV Daily 29MAY",  "MGV Close",   "MGV Adj. Close",  "MGV Open"),
+    "BIL": ("BIL daily",        "BIL Close",   "BIL Adj. Close",  "BIL Open"),
+    "VEU": ("VEU daily 29MAY",  "VEU Close",   "VEU Adj. Close",  "VEU Open"),
+    "JIVE":("JIVE Daily 29MAY", "JIVE Close",  "JIVE Adj. Close", None),
+    "AVUV":("AVUV Daily",       "AVUV Close",  "AVUV Adj. Close", None),
+    # VOO sourced from VFINX (long-history Vanguard mutual fund proxy)
+    "VOO": ("VFINX Daily",      "VFINX Close", None,              None),
+}
+# Relative path from project root to the backfilled workbook
+WORKBOOK_FILE = "Config/Master_workbook_BackfilledPre2016.xlsx"
+
 
 def ensure(pkg):
     if importlib.util.find_spec(pkg) is None:
@@ -253,6 +285,97 @@ def _clean_div_series(raw_divs, asset, sym):
         return pd.Series(dtype=float, name=asset)
 
 
+
+
+def _ensure_workbook_in_config():
+    """
+    Copy the backfilled workbook to Config/ if it is not already there.
+    The workbook may be committed to the repo root or Config/.
+    Searches common locations and copies to Config/ so _load_workbook_prices()
+    can find it via WORKBOOK_FILE.
+    """
+    target = PROJECT / WORKBOOK_FILE
+    if target.exists():
+        return  # already in place
+
+    candidates = [
+        PROJECT / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+        PROJECT / "Data" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+        PROJECT.parent / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+        PROJECT / "Config" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+    ]
+    for src in candidates:
+        if src.exists():
+            import shutil
+            target.parent.mkdir(exist_ok=True)
+            shutil.copy2(src, target)
+            print(f"  Workbook copied: {src.name} → {target}")
+            return
+
+    print("  WARNING: Backfilled workbook not found in any expected location.")
+    print("  Price history will be limited to Yahoo's available range.")
+    print("  To fix: commit Master_workbook_Portfolio_BackfilledPre2016.xlsx")
+    print("  to the repo root or Config/ folder.")
+
+
+def _load_workbook_prices():
+    """
+    Load price history from the local backfilled Excel workbook.
+    Returns a dict: {asset: DataFrame with columns [Date, Close, Adj_Close, Open]}
+    All columns that exist; missing columns (e.g. Open for VFINX) are omitted.
+    Returns empty dict if workbook not found (falls back to Yahoo-only mode).
+    """
+    import pandas as pd
+
+    wb_path = PROJECT / WORKBOOK_FILE
+    if not wb_path.exists():
+        # Try Config/ subfolder with original filename
+        for candidate in [
+            PROJECT / "Config" / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+            PROJECT / "Config" / "Master_workbook_BackfilledPre2016.xlsx",
+            PROJECT.parent / "Master_workbook_Portfolio_BackfilledPre2016.xlsx",
+        ]:
+            if candidate.exists():
+                wb_path = candidate
+                break
+        else:
+            print("  WARNING: Backfilled workbook not found — falling back to Yahoo-only mode")
+            return {}
+
+    print(f"  Loading workbook: {wb_path.name}")
+    try:
+        xl = pd.read_excel(wb_path, sheet_name=None)
+    except Exception as e:
+        print(f"  WARNING: Could not read workbook: {e}")
+        return {}
+
+    result = {}
+    for asset, (sheet, close_col, adj_col, open_col) in WORKBOOK_SOURCES.items():
+        if sheet not in xl:
+            print(f"  WARNING: Sheet '{sheet}' not found for {asset}")
+            continue
+        df = xl[sheet].copy()
+        if "Date" not in df.columns:
+            continue
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.sort_values("Date").reset_index(drop=True)
+        out = pd.DataFrame({"Date": df["Date"]})
+        if close_col and close_col in df.columns:
+            out["Close"] = pd.to_numeric(df[close_col], errors="coerce")
+        if adj_col and adj_col in df.columns:
+            out["Adj_Close"] = pd.to_numeric(df[adj_col], errors="coerce")
+        elif close_col and close_col in df.columns:
+            # No adj close available — use close as proxy (e.g. VFINX)
+            out["Adj_Close"] = out["Close"]
+        if open_col and open_col in df.columns:
+            out["Open"] = pd.to_numeric(df[open_col], errors="coerce")
+        result[asset] = out.dropna(subset=["Close"]).reset_index(drop=True)
+        cutoff = result[asset]["Date"].max()
+        print(f"  Workbook {asset}: {result[asset]['Date'].min().date()} → "
+              f"{cutoff.date()}  ({len(result[asset])} rows)")
+    return result
+
+
 def download_prices(required_assets):
     """
     Download Open, raw Close, Adjusted Close, and cash distributions.
@@ -279,16 +402,88 @@ def download_prices(required_assets):
     all_assets = sorted(set(required_assets) | set(CORE_ASSETS) | set(RESEARCH_ASSETS))
     adj_frames, raw_frames, open_frames, div_frames, audit = [], [], [], [], []
 
+    # Load workbook price history for primary assets (full 15-year history)
+    workbook_data = _load_workbook_prices()
+
     for asset in all_assets:
         if asset in {"TACTICAL", "A1V12"}:
             continue
         sym = YMAP.get(asset, asset)
-        print(f"Downloading {asset} ({sym})...")
+
+        # ── Workbook-sourced assets ────────────────────────────────────
+        if asset in workbook_data:
+            wb_df = workbook_data[asset]
+            wb_cutoff = wb_df["Date"].max()
+
+            # Gap-fill from workbook cutoff → today via Yahoo (recent data only)
+            gap_start = (wb_cutoff - pd.Timedelta(days=5)).strftime("%Y-%m-%d")
+            print(f"Workbook {asset} → gap-filling from {gap_start} via Yahoo...")
+            try:
+                gap_dl = yf.download(sym, start=gap_start, auto_adjust=False,
+                                     progress=False, threads=False)
+                if isinstance(gap_dl.columns, pd.MultiIndex):
+                    gap_dl.columns = gap_dl.columns.get_level_values(0)
+                if not gap_dl.empty:
+                    gap_idx = pd.to_datetime(gap_dl.index)
+                    if getattr(gap_idx, "tz", None) is not None:
+                        gap_idx = gap_idx.tz_localize(None)
+                    gap_idx = gap_idx.normalize()
+
+                    gap_close = pd.to_numeric(gap_dl.get("Close"), errors="coerce")
+                    gap_adj   = pd.to_numeric(
+                        gap_dl.get("Adj Close", gap_dl.get("Close")), errors="coerce")
+                    gap_open  = pd.to_numeric(gap_dl.get("Open"), errors="coerce")
+                    gap_div   = pd.to_numeric(
+                        gap_dl.get("Dividends", pd.Series(0.0, index=gap_dl.index)),
+                        errors="coerce").fillna(0.0)
+
+                    new_rows = gap_idx > wb_cutoff
+                    if new_rows.any():
+                        ext = pd.DataFrame({
+                            "Date":      gap_idx[new_rows],
+                            "Close":     gap_close.values[new_rows],
+                            "Adj_Close": gap_adj.values[new_rows],
+                        })
+                        if gap_open is not None:
+                            ext["Open"] = gap_open.values[new_rows]
+                        wb_df = pd.concat([wb_df, ext],
+                                          ignore_index=True).sort_values("Date")
+                        print(f"  Gap-filled {asset} to {wb_df['Date'].max().date()}")
+
+                    # Dividends for gap period
+                    gap_div_rows = pd.DataFrame({
+                        "Date":  gap_idx,
+                        asset:   gap_div.values,
+                    })
+                    div_frames.append(gap_div_rows[gap_div_rows[asset].abs() > 1e-12]
+                                      .drop_duplicates("Date"))
+            except Exception as ge:
+                print(f"  WARNING: gap-fill failed for {asset}: {ge}")
+
+            def wb_frame(col, label):
+                if col not in wb_df.columns:
+                    return None
+                f = pd.DataFrame({"Date": wb_df["Date"], label: wb_df[col]})
+                return f.dropna(subset=[label]).drop_duplicates("Date", keep="last")
+
+            adj_f = wb_frame("Adj_Close", asset)
+            raw_f = wb_frame("Close", asset)
+            opn_f = wb_frame("Open", asset) if "Open" in wb_df.columns else None
+
+            if adj_f is not None: adj_frames.append(adj_f)
+            if raw_f is not None: raw_frames.append(raw_f)
+            if opn_f is not None: open_frames.append(opn_f)
+
+            audit.append([asset, f"Workbook+Yahoo", "OK",
+                          wb_df["Date"].min().date().isoformat(),
+                          wb_df["Date"].max().date().isoformat(),
+                          len(wb_df),
+                          f"Workbook history + Yahoo gap-fill to {wb_df['Date'].max().date()}"])
+            continue
+
+        # ── Yahoo-only assets ──────────────────────────────────────────
+        print(f"Downloading {asset} ({sym}) from Yahoo...")
         try:
-            # ── Price history ───────────────────────────────────────────
-            # Use yf.download() for price data — more reliable for long
-            # date ranges than Ticker.history() which may silently truncate
-            # to 5 years when auto_adjust=False on newer yfinance versions.
             raw_dl = yf.download(sym, start=START_DATE, auto_adjust=False,
                                  progress=False, threads=False)
             if raw_dl.empty and asset == "DXY":
@@ -297,27 +492,20 @@ def download_prices(required_assets):
             if isinstance(raw_dl.columns, pd.MultiIndex):
                 raw_dl.columns = raw_dl.columns.get_level_values(0)
 
-            # Also fetch history() for dividends (actions=True)
-            # but use download() prices as the authoritative source
             hist = yf.Ticker(sym).history(
                 start=START_DATE, auto_adjust=False, actions=True, repair=False
             )
             if isinstance(hist.columns, pd.MultiIndex):
                 hist.columns = hist.columns.get_level_values(0)
 
-            # If download() returned more history, prefer it for prices
             if not raw_dl.empty and (hist.empty or len(raw_dl) > len(hist)):
-                # Build a combined frame: prices from raw_dl, dividends from hist
                 hist_prices = raw_dl.copy()
                 if not hist.empty and "Dividends" in hist.columns:
                     hist_idx = pd.to_datetime(hist.index)
                     if getattr(hist_idx, "tz", None) is not None:
                         hist_idx = hist_idx.tz_localize(None)
                     hist_idx = hist_idx.normalize()
-                    div_series = pd.Series(
-                        hist["Dividends"].values,
-                        index=hist_idx
-                    )
+                    div_series = pd.Series(hist["Dividends"].values, index=hist_idx)
                     dl_idx = pd.to_datetime(raw_dl.index).normalize()
                     hist_prices.index = dl_idx
                     hist_prices["Dividends"] = div_series.reindex(dl_idx).fillna(0.0)
@@ -1393,6 +1581,11 @@ def main():
     print("BUILD: A1V12 Yahoo Production v3.4")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
+
+    # Copy backfilled workbook to Config/ if not already there
+    # The workbook provides full price history for MGK, MGV and other
+    # primary assets, avoiding Yahoo's server-side 5-year truncation.
+    _ensure_workbook_in_config()
 
     alloc_df = read_allocations()
     static_models, tactical_models = build_model_configs(alloc_df)
