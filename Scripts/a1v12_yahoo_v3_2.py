@@ -705,7 +705,15 @@ def build_signals(comp_adj):
     """
     v3.4 signal engine — binary MGK/MGV, no JIVE.
     Signal computed on Adjusted Close ratio vs EMA89.
-    T+1 execution. 3-day uniform cooldown.
+
+    Execution: strictly look-ahead free.
+      - position[i] set by raw_signal[i] (today's closing prices)
+      - effective_position[i] = position[i-1]  (yesterday's decision)
+      - EffectiveHolding[i] reflects the trade that executes at day i open
+      - Return on day i earned on the holding chosen the PRIOR day
+      - Trade date = T+1 (next day after crossover confirmed)
+      - Trade executes at T+1 opening price (in build_tactical_values)
+    3-day uniform cooldown applied to position[] before the shift.
     """
     import pandas as pd
 
@@ -728,17 +736,38 @@ def build_signals(comp_adj):
         else:
             position[i] = position[i - 1]
 
+    # ── T+1 execution — correct look-ahead-free signal shift ─────────────
+    # position[i] is determined by raw_signal[i] (today's closing prices).
+    # The decision cannot be acted on until the NEXT trading day's open.
+    # So the effective holding on day i must be based on position[i-1].
+    #
+    # Shift:  effective_position[i] = position[i-1]
+    #         Trigger date = day i-1  (when crossover was detected)
+    #         Trade date   = day i    (when order executes at open)
+    #         EffectiveHolding[i] reflects the new holding from open of day i
+    #
+    # This eliminates same-day look-ahead bias where position[i] (set by
+    # today's close) was incorrectly used to earn today's return.
+
+    # Shift position forward by 1: day 0 keeps initial holding
+    effective_position = [position[0]] + list(position[:-1])
+
     holdings_list = []
     trades_list   = []
-    current_holding = "MGV" if position[0] == 0 else "MGK"
+    current_holding = "MGV" if effective_position[0] == 0 else "MGK"
     holdings_list.append([sig["Date"].iloc[0],
                           "Growth" if current_holding == "MGK" else "Value",
                           current_holding])
 
     for i in range(1, n):
-        new_holding = "MGK" if position[i] == 1 else "MGV"
+        new_holding = "MGK" if effective_position[i] == 1 else "MGV"
         new_state   = "Growth" if new_holding == "MGK" else "Value"
-        if position[i] != position[i - 1]:
+        if effective_position[i] != effective_position[i - 1]:
+            # Trigger: the day the crossover was confirmed (position changed)
+            # That is day i-1 in position[] = day i-2 in effective_position[]
+            # but labelled as the day the raw signal fired = position[i] != position[i-1]
+            # which is effective_position[i+1] != effective_position[i] lookahead
+            # Simpler: trigger = yesterday (sig date i-1), trade = today (sig date i)
             trigger_date = sig["Date"].iloc[i - 1]
             trade_date   = sig["Date"].iloc[i]
             rule = (f"Next trading day after trigger "
