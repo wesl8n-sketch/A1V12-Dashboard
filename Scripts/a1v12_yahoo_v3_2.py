@@ -1036,6 +1036,28 @@ def csv_payload(name):
     return p.read_text() if p.exists() else ""
 
 
+def _latest_prices_json():
+    """
+    Return a JSON string mapping asset → latest raw close price.
+    Used by the dashboard to compute industry-standard dividend yield:
+        yield = sum(last 4 quarterly dividends) / current price
+    """
+    import json as _json
+    p = DATA / "Composite_Prices_Raw_Close.csv"
+    if not p.exists():
+        p = DATA / "Composite_Prices.csv"
+    if not p.exists():
+        return "{}"
+    try:
+        import pandas as pd
+        df = pd.read_csv(p)
+        last = df.iloc[-1].drop("Date", errors="ignore")
+        return _json.dumps({k: float(v) for k, v in last.items()
+                            if pd.notna(v) and float(v) > 0})
+    except Exception:
+        return "{}"
+
+
 def build_dashboard():
     payload = {
         "tactical":          csv_payload("Tactical_Daily_Values.csv"),
@@ -1056,6 +1078,10 @@ def build_dashboard():
         "divperiods":        csv_payload("Dividend_Holding_Periods.csv"),
         "divassetmonthly":   csv_payload("Dividend_Asset_Monthly.csv"),       # FIX: was missing
         "fixedincomeverify": csv_payload("Fixed_Income_Monthly_Verification.csv"),  # FIX: was missing
+        # Asset price and dividend history for industry-standard yield calculation
+        # yield = sum(last 4 dividends) / current price
+        "divhistory":        csv_payload("Dividend_History.csv"),
+        "assetprices":       _latest_prices_json(),
     }
     html = DASHBOARD_HTML.replace("__PAYLOAD__", json.dumps(payload))
     out  = DASH / "A1V12_Yahoo_Production_v3_2_Dashboard.html"
@@ -1119,7 +1145,18 @@ const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date'
 let sortState={},tableData={},period='3Y',periods=['YTD','1Y','2Y','3Y','5Y','2018','2016','SI'],visible=[];
 function parseCSV(t){if(!t)return[];let L=t.trim().split(/\r?\n/);if(!L[0])return[];let H=L[0].split(',');return L.slice(1).filter(Boolean).map(l=>{let V=[],c='',q=false;for(let i=0;i<l.length;i++){let ch=l[i];if(ch=='"')q=!q;else if(ch==','&&!q){V.push(c);c=''}else c+=ch}V.push(c);let o={};H.forEach((h,i)=>{let v=V[i]??'',n=parseFloat(v);o[h]=(!STR.has(h)&&!isNaN(n)&&v.trim()!=='')?n:v});return o})}
 let tactical=parseCSV(EMBEDDED.tactical),portfolio=parseCSV(EMBEDDED.portfolio),signals=parseCSV(EMBEDDED.signals),trades=parseCSV(EMBEDDED.trades),holdsum=parseCSV(EMBEDDED.holdsum),holdperiods=parseCSV(EMBEDDED.holdperiods),audit=parseCSV(EMBEDDED.dataaudit),prodaudit=parseCSV(EMBEDDED.prodaudit),modelmap=parseCSV(EMBEDDED.modelmap),alloc=parseCSV(EMBEDDED.alloc),backfillaudit=parseCSV(EMBEDDED.backfillaudit);
-let divsummary=parseCSV(EMBEDDED.divsummary||''),divannual=parseCSV(EMBEDDED.divannual||''),divasset=parseCSV(EMBEDDED.divasset||''),divperiods=parseCSV(EMBEDDED.divperiods||'');
+let divsummary=parseCSV(EMBEDDED.divsummary||''),divannual=parseCSV(EMBEDDED.divannual||''),divasset=parseCSV(EMBEDDED.divasset||''),divperiods=parseCSV(EMBEDDED.divperiods||''),divhistory=parseCSV(EMBEDDED.divhistory||'');
+const assetprices=(()=>{try{return JSON.parse(EMBEDDED.assetprices||'{}')}catch(e){return {}}})()
+// trailingYield(asset): sum of last 4 dividend payments / current price
+function trailingYield(asset){
+  const px=assetprices[asset];
+  if(!px||px<=0)return null;
+  const rows=divhistory.filter(r=>r.Asset===asset&&isFinite(r.Div_Per_Share)&&Number(r.Div_Per_Share)>0)
+    .sort((a,b)=>String(b.Ex_Date).localeCompare(String(a.Ex_Date)));
+  // Sum last 4 payments (covers ~1 year of quarterly distributions)
+  const last4=rows.slice(0,4).reduce((s,r)=>s+Number(r.Div_Per_Share),0);
+  return last4>0?last4/px:null;
+}
 let divassetmonthly=parseCSV(EMBEDDED.divassetmonthly||'');
 let fixedincomeverify=parseCSV(EMBEDDED.fixedincomeverify||'');
 let bilSeries=tactical.filter(r=>isFinite(r['BIL Buy Hold'])).map(r=>({Date:r.Date,BIL:r['BIL Buy Hold']}));
@@ -1171,39 +1208,62 @@ let tc=cols(tactical).filter(x=>['A1V12','VOO Benchmark','MGK Buy Hold','MGV Buy
 let td=rebase(cut(tactical),tc),tm=metric(td,tc);draw('tacticalChart',td,tc,'tacticalLegend');draw('tacticalDD',dailyDrawdown(td,tc),tc,'tacticalDDLegend',true);drawTable('tacticalMetrics',tm);let sd=rebase(cut(portfolio),staticCols());draw('mwmChart',sd,staticCols(),'mwmLegend');drawTable('mwmMetrics',metric(sd,staticCols()));let tmd=rebase(cut(portfolio),tacticalModelCols());draw('tacticalModelsChart',tmd,tacticalModelCols(),'tacticalModelsLegend');drawTable('tacticalModelsMetrics',metric(tmd,tacticalModelCols()));state();drawTable('signalTable',recentSignals(),true);let auditRows=[...chartAuditRows('Overview',rb,visible,false),...chartAuditRows('Tactical Sleeve',td,tc,false),...chartAuditRows('Tactical Drawdown',td,tc,true),...chartAuditRows('MWM Static',sd,staticCols(),false),...chartAuditRows('Tactical Models',tmd,tacticalModelCols(),false)];drawTable('chartAuditTable',auditRows);updateDivYield()}
 function state(){let s=signals.at(-1)||{},tr=trades.at(-1)||{};let stateHtml=`<div class=tradebox><div class=tradeitem><div class=label>Current State</div><div class=big>${s.State||'N/A'}</div></div><div class=tradeitem><div class=label>Current Holding</div><div class=big>${s.EffectiveHolding||'N/A'}</div></div><div class=tradeitem><div class=label>Latest Signal Date</div><div class=big>${s.Date||'N/A'}</div></div><div class=tradeitem><div class=label>MGK/MGV Ratio</div><div class=big>${isFinite(s.MGK_MGV)?s.MGK_MGV.toFixed(4):'N/A'}</div></div><div class=tradeitem><div class=label>EMA89</div><div class=big>${isFinite(s.MGK_MGV_EMA89)?s.MGK_MGV_EMA89.toFixed(4):'N/A'}</div></div></div>`;let tradeHtml=`<div class=tradebox style="margin-top:10px"><div class=tradeitem><div class=label>Trigger Date</div><div class=big>${tr.Trigger_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Trade Date</div><div class=big>${tr.Trade_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Latest Trade</div><div class=big>${tr.From||''} → ${tr.To||''}</div></div><div class=tradeitem><div class=label>Rule</div><div class=note>${tr.Rule||'N/A'}</div></div></div>`;document.getElementById('stateBox').innerHTML=stateHtml;document.getElementById('latestTrade').innerHTML=tradeHtml;document.getElementById('latestTrade2').innerHTML=tradeHtml}
 function updateDivYield(){
-  // Show annualized dividend yield for the first selected model
+  // Dividend yield display in Current State card.
+  //
+  // S&P 500 (VOO): industry-standard calculation —
+  //   sum of last 4 VOO dividend payments / current VOO price
+  //   Matches Morningstar / Yahoo Finance published yield.
+  //
+  // Portfolio models: TTM income / current NAV from dividend engine.
+  //   Reflects the blended yield of the actual model holdings.
+  //
+  // Always shows S&P 500 first (benchmark anchor), then up to 4
+  // selected models from visible[]. No dollar amounts shown.
+
   const el=document.getElementById('divYield');
-  if(!el||!divsummary.length)return;
-  // Pick first visible model, fallback to A1V12 Tactical Sleeve
-  const model=visible.length?visible[0]:'A1V12 Tactical Sleeve';
-  const sum=divsummary.find(r=>r.Model===model);
-  if(!sum){el.innerHTML='';return;}
-  // TTM yield = TTM income / current portfolio NAV
+  if(!el)return;
   const pv=portfolio.length?portfolio[portfolio.length-1]:null;
-  const nav=pv&&isFinite(pv[model])?pv[model]:null;
-  const ttm=isFinite(sum.TTM_Dividend_Income)?Number(sum.TTM_Dividend_Income):null;
-  const prior=isFinite(sum.Prior_Full_Year_Income)?Number(sum.Prior_Full_Year_Income):null;
-  const yld=nav&&ttm?ttm/nav:null;
-  const priorYld=nav&&prior?prior/nav:null;
-  const modelShort=model.replace('MWM ','').replace('Tactical ','Tact. ');
+
+  function modelYield(model){
+    // Portfolio model: TTM income / current portfolio NAV
+    const sum=divsummary.find(r=>r.Model===model);
+    if(!sum)return null;
+    const nav=pv&&isFinite(pv[model])?Number(pv[model]):null;
+    const ttm=isFinite(sum.TTM_Dividend_Income)?Number(sum.TTM_Dividend_Income):null;
+    return nav&&ttm&&nav>0?ttm/nav:null;
+  }
+
+  function shortName(m){
+    if(m==='VOO Benchmark')return 'S&P 500';
+    return m.replace('MWM ','').replace('Tactical ','').replace(' Plus','+');
+  }
+
+  // S&P 500 tile: last 4 VOO dividends / current VOO price
+  const vooYld=trailingYield('VOO');
+
+  // Portfolio model tiles: up to 4 from visible[], excluding VOO Benchmark
+  const modelList=visible.filter(m=>m!=='VOO Benchmark').slice(0,4);
+
+  // Build S&P 500 tile first
+  const vooTile=`<div class=tradeitem style="border:2px solid #17365d">
+    <div class=label>S&amp;P 500</div>
+    <div class=big style="font-size:20px">${vooYld?pct(vooYld):'—'}</div>
+    <div class=note>Last 4 divs ÷ price</div>
+  </div>`;
+
+  // Build model tiles
+  const modelTiles=modelList.map(model=>{
+    const yld=modelYield(model);
+    return `<div class=tradeitem>
+      <div class=label>${shortName(model)}</div>
+      <div class=big style="font-size:20px">${yld?pct(yld):'—'}</div>
+      <div class=note>TTM yield</div>
+    </div>`;
+  }).join('');
+
   el.innerHTML=`<div style="border-top:1px solid #e5e7eb;padding-top:10px;margin-top:2px">
-    <div class=label style="margin-bottom:6px">Portfolio Dividend Yield — ${modelShort}</div>
-    <div class=tradebox>
-      <div class=tradeitem>
-        <div class=label>TTM Income</div>
-        <div class=big style="font-size:18px">${money(ttm)}</div>
-      </div>
-      <div class=tradeitem>
-        <div class=label>TTM Yield</div>
-        <div class=big style="font-size:18px">${yld?pct(yld):'N/A'}</div>
-        <div class=note>on current NAV</div>
-      </div>
-      <div class=tradeitem>
-        <div class=label>Prior Full-Year</div>
-        <div class=big style="font-size:18px">${money(prior)}</div>
-        <div class=note>${priorYld?pct(priorYld)+' yield':''}</div>
-      </div>
-    </div>
+    <div class=label style="margin-bottom:6px">Dividend Yield</div>
+    <div class=tradebox>${vooTile}${modelTiles}</div>
   </div>`;
 }
 function staticTables(){drawTable('tradeTable',trades.slice().reverse());drawTable('holdingSummary',holdsum);drawTable('holdingPeriods',holdperiods.slice().reverse());drawTable('auditTable',audit);drawTable('prodAuditTable',prodaudit);drawTable('modelMapTable',modelmap);drawTable('allocationTable',alloc);drawTable('backfillAuditTable',backfillaudit)}
