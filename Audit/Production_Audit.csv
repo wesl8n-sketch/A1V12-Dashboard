@@ -1,14 +1,15 @@
 Check,Status,Detail
-Performance price basis,PASS,"Yahoo raw Close for NAV, charts, metrics, and drawdowns"
+Performance price basis,PASS,"Yahoo raw Close for NAV, charts, metrics, drawdowns"
 Signal price basis,PASS,Yahoo Adjusted Close for MGK/MGV ratio and EMA89
 Dividend treatment,PASS,Cash distributions reported separately; not reinvested in price-return NAV
 Allocation file,PASS,Config/MWM_Allocations.csv
 Allocation rows,PASS,82
 Static MWM models,PASS,"MWM Aggressive, MWM Balanced, MWM Conservative, MWM Growth, MWM Growth Plus, MWM Moderate, MWM Ultra Aggressive"
 Tactical models,PASS,"Tactical Aggressive, Tactical Balanced, Tactical Conservative, Tactical Growth, Tactical Growth Plus, Tactical Moderate, Tactical Ultra Aggressive"
-Tactical sleeve,PASS,Binary MGK/MGV — no JIVE (v3.3)
-EMA warmup,PASS,Price history downloaded from 2008-01-01; EMA89 warm by 2011-01-01; portfolio NAV and dashboard start from 2011-01-01
+Tactical sleeve,PASS,Binary MGK/MGV — no JIVE (v3.4)
+EMA warmup,PASS,Price history from 2008-01-01; EMA89 warm by 2011-01-01; portfolio NAV starts from 2011-01-01
 Cooldown rule,PASS,"3 trading days after any trade (Growth<->Value, uniform)"
+Open-price execution,PASS,Trade-day return split at open price; fallback to prior close if open missing
 Allocation assets resolve to live data,PASS,All Production_Assets have OK price data
 Adjusted composite rows,PASS,4663
 Raw composite rows,PASS,4663
@@ -17,8 +18,7 @@ Trade ledger rows,PASS,204
 Portfolio values rows,PASS,3902
 Latest signal date,PASS,2026-07-10 00:00:00
 Latest portfolio date,PASS,2026-07-10 00:00:00
-Portfolio rebalancing,PASS,"Annual (first trading day of each year) for all multi-asset models; continuous daily blend for single-asset models (Tactical Sleeve, VOO Benchmark)"
-Backfill scaling,PASS,Backfill legs ratio-scaled to first live observation
+Portfolio rebalancing,PASS,Annual (first trading day of each year) for multi-asset models; continuous blend for single-asset models
+Backfill scaling,PASS,Ratio-scaled to first live observation
 Chart downsampling,PASS,"Daily <=2Y, Weekly >2Y, Monthly >=8Y/SI"
 Drawdown chart,PASS,Daily drawdown computed before downsampling
-MCI production status,PASS,Research-only / unused

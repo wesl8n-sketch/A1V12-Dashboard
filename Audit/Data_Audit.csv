@@ -1,33 +1,33 @@
 Asset,Yahoo_Symbol,Status,First_Date,Last_Date,Rows,Notes
-AVUV,AVUV,OK,2019-09-26,2026-07-10,1705,Open + Raw Close + Adj Close; 27 dividend events
-BIL,BIL,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 118 dividend events
-DFSVX,DFSVX,OK,2008-01-02,2026-07-09,4658,Open + Raw Close + Adj Close; 69 dividend events
-DXY,DX-Y.NYB,OK,2008-01-02,2026-07-10,4660,Open + Raw Close + Adj Close; 0 dividend events
-EFV,EFV,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 38 dividend events
-FBTC,FBTC,OK,2024-01-11,2026-07-10,625,Open + Raw Close + Adj Close; 0 dividend events
-FGBPX,FGBPX,OK,2008-01-02,2026-07-09,4658,Open + Raw Close + Adj Close; 228 dividend events
-FIKQX,FIKQX,OK,2018-10-04,2026-07-09,1949,Open + Raw Close + Adj Close; 99 dividend events
-FIWDX,FIWDX,OK,2018-10-04,2026-07-09,1949,Open + Raw Close + Adj Close; 107 dividend events
-FRDM,FRDM,OK,2019-06-14,2026-07-10,1777,Open + Raw Close + Adj Close; 24 dividend events
-FSRIX,FSRIX,OK,2008-01-02,2026-07-09,4658,Open + Raw Close + Adj Close; 249 dividend events
-IMCB,IMCB,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 75 dividend events
-JBND,JBND,OK,2023-10-12,2026-07-10,687,Open + Raw Close + Adj Close; 35 dividend events
-JIVE,JIVE,OK,2023-09-14,2026-07-10,707,Open + Raw Close + Adj Close; 5 dividend events
-JMSFX,JMSFX,OK,2014-11-10,2026-07-09,2931,Open + Raw Close + Adj Close; 142 dividend events
-JMSIX,JMSIX,OK,2014-11-10,2026-07-09,2931,Open + Raw Close + Adj Close; 142 dividend events
-JPIE,JPIE,OK,2021-11-02,2026-07-10,1175,Open + Raw Close + Adj Close; 57 dividend events
-MGK,MGK,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 73 dividend events
-MGV,MGV,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 73 dividend events
-MTUM,MTUM,OK,2013-04-18,2026-07-10,3327,Open + Raw Close + Adj Close; 53 dividend events
-NERYX,NERYX,OK,2008-01-02,2026-07-09,4658,Open + Raw Close + Adj Close; 219 dividend events
-PIMIX,PIMIX,OK,2008-01-02,2026-07-09,4658,Open + Raw Close + Adj Close; 234 dividend events
-SPHB,SPHB,OK,2011-05-05,2026-07-10,3817,Open + Raw Close + Adj Close; 59 dividend events
-VEU,VEU,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 60 dividend events
-VFINX,VFINX,OK,2008-01-02,2026-07-09,4658,Open + Raw Close + Adj Close; 74 dividend events
-VIX,^VIX,OK,2008-01-02,2026-07-10,4660,Open + Raw Close + Adj Close; 0 dividend events
-VOO,VOO,OK,2010-09-09,2026-07-10,3982,Open + Raw Close + Adj Close; 63 dividend events
-WOBDX,WOBDX,OK,2008-01-02,2026-07-09,4658,Open + Raw Close + Adj Close; 233 dividend events
-XLF,XLF,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 74 dividend events
-XLG,XLG,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 72 dividend events
-XLRE,XLRE,OK,2015-10-08,2026-07-10,2703,Open + Raw Close + Adj Close; 43 dividend events
-XLV,XLV,OK,2008-01-02,2026-07-10,4659,Open + Raw Close + Adj Close; 75 dividend events
+AVUV,AVUV,OK,2019-09-26,2026-07-10,1705,Open+Raw+Adj; 27 div events
+BIL,BIL,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 118 div events
+DFSVX,DFSVX,OK,2008-01-02,2026-07-09,4658,Open+Raw+Adj; 69 div events
+DXY,DX-Y.NYB,OK,2008-01-02,2026-07-10,4660,Open+Raw+Adj; 0 div events
+EFV,EFV,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 38 div events
+FBTC,FBTC,OK,2024-01-11,2026-07-10,625,Open+Raw+Adj; 0 div events
+FGBPX,FGBPX,OK,2008-01-02,2026-07-09,4658,Open+Raw+Adj; 228 div events
+FIKQX,FIKQX,OK,2018-10-04,2026-07-09,1949,Open+Raw+Adj; 99 div events
+FIWDX,FIWDX,OK,2018-10-04,2026-07-09,1949,Open+Raw+Adj; 107 div events
+FRDM,FRDM,OK,2019-06-14,2026-07-10,1777,Open+Raw+Adj; 24 div events
+FSRIX,FSRIX,OK,2008-01-02,2026-07-09,4658,Open+Raw+Adj; 249 div events
+IMCB,IMCB,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 75 div events
+JBND,JBND,OK,2023-10-12,2026-07-10,687,Open+Raw+Adj; 35 div events
+JIVE,JIVE,OK,2023-09-14,2026-07-10,707,Open+Raw+Adj; 5 div events
+JMSFX,JMSFX,OK,2014-11-10,2026-07-09,2931,Open+Raw+Adj; 142 div events
+JMSIX,JMSIX,OK,2014-11-10,2026-07-09,2931,Open+Raw+Adj; 142 div events
+JPIE,JPIE,OK,2021-11-02,2026-07-10,1175,Open+Raw+Adj; 57 div events
+MGK,MGK,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 73 div events
+MGV,MGV,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 73 div events
+MTUM,MTUM,OK,2013-04-18,2026-07-10,3327,Open+Raw+Adj; 53 div events
+NERYX,NERYX,OK,2008-01-02,2026-07-09,4658,Open+Raw+Adj; 219 div events
+PIMIX,PIMIX,OK,2008-01-02,2026-07-09,4658,Open+Raw+Adj; 234 div events
+SPHB,SPHB,OK,2011-05-05,2026-07-10,3817,Open+Raw+Adj; 59 div events
+VEU,VEU,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 60 div events
+VFINX,VFINX,OK,2008-01-02,2026-07-09,4658,Open+Raw+Adj; 74 div events
+VIX,^VIX,OK,2008-01-02,2026-07-10,4660,Open+Raw+Adj; 0 div events
+VOO,VOO,OK,2010-09-09,2026-07-10,3982,Open+Raw+Adj; 63 div events
+WOBDX,WOBDX,OK,2008-01-02,2026-07-09,4658,Open+Raw+Adj; 233 div events
+XLF,XLF,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 74 div events
+XLG,XLG,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 72 div events
+XLRE,XLRE,OK,2015-10-08,2026-07-10,2703,Open+Raw+Adj; 43 div events
+XLV,XLV,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 75 div events

@@ -1,15 +1,15 @@
 Asset,Status,Distribution_Count,Total_DPS,Detail
-AVUV,PASS,58,29.94511984986408,Distribution events found
-FBTC,PASS,40,22.872869169438566,Distribution events found
-FIKQX,PASS,99,2.045,Distribution events found
-FIWDX,PASS,107,4.056,Distribution events found
-IMCB,PASS,62,11.018,Distribution events found
-JBND,PASS,201,29.92912777157441,Distribution events found
-JPIE,PASS,142,29.657066938342624,Distribution events found
-PIMIX,PASS,196,10.821,Distribution events found
-TACTICAL,PASS,61,112393.70748340253,Distribution events found
-VEU,PASS,57,24.029,Distribution events found
-VOO,PASS,61,74.176,Distribution events found
-XLF,PASS,62,7.659066,Distribution events found
-XLG,PASS,60,4.8712,Distribution events found
-XLV,PASS,63,23.923000000000002,Distribution events found
+AVUV,PASS,58,29.94511984986408,Events found
+FBTC,PASS,40,22.872869169438566,Events found
+FIKQX,PASS,99,2.045,Events found
+FIWDX,PASS,107,4.056,Events found
+IMCB,PASS,62,11.018,Events found
+JBND,PASS,201,29.92912777157441,Events found
+JPIE,PASS,142,29.657066938342624,Events found
+PIMIX,PASS,196,10.821,Events found
+TACTICAL,PASS,61,112393.70748340253,Events found
+VEU,PASS,57,24.029,Events found
+VOO,PASS,61,74.176,Events found
+XLF,PASS,62,7.659066,Events found
+XLG,PASS,60,4.8712,Events found
+XLV,PASS,63,23.923000000000002,Events found
