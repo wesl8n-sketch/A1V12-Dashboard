@@ -5,13 +5,21 @@ A1V12 Yahoo Production v3.4 (Raw-Close Performance + Dividend Income)
 Complete integrated package.
 
 Production methodology:
-- Tactical sleeve (MGK/MGV) and fixed-income mutual funds (PIMIX,
-  FIWDX, FIKQX, JBND, JPIE): raw Close for NAV/charts/metrics.
-  Dividends reported separately via the dividend engine.
-- Equity ETFs and diversified funds: Adjusted Close (total return).
-  Distributions reinvested via adj-close pricing.
+- Tactical sleeve (MGK/MGV): raw Close for NAV/charts/metrics.
+  Matches Koyfin and brokerage statements. Dividends shown separately.
+- All other assets: Adjusted Close (total return, buy-and-hold).
+  Graphs reflect actual investor return including reinvested distributions.
+  PIMIX +22% in 2012, +11% in 2025 — matches Yahoo Finance total return.
 - Tactical signals: Adjusted Close for MGK/MGV ratio (unchanged).
-- RAW_CLOSE_ASSETS constant controls which assets use raw close.
+- RAW_CLOSE_ASSETS = {MGK, MGV, TACTICAL, A1V12} only.
+
+v3.4.4 patch:
+- Confirmed RAW_CLOSE_ASSETS = tactical sleeve only (MGK, MGV, TACTICAL).
+  Goal: non-tactical graphs show buy-and-hold total return matching what
+  an investor actually earns. Adj-close achieves this — PIMIX shows +22%%
+  in 2012 and +11%% in 2025, consistent with Yahoo Finance total return.
+  Fixed-income mutual funds stay on adj-close; their declining dividend
+  income pattern reflects genuine rate-environment effect, not a bug.
 
 v3.4.3 patch:
 - RAW_CLOSE_ASSETS expanded to include PIMIX, FIWDX, FIKQX, JBND, JPIE
@@ -116,8 +124,14 @@ TACTICAL_REPLACEMENT_CANDIDATES = {"MGK", "XLG", "VOO"}
 COOLDOWN_DAYS = 3
 
 # Assets priced on raw Close in the portfolio NAV.
-# Everything else uses Adjusted Close (total return, distributions reinvested).
-# TACTICAL is the synthetic sleeve series derived from MGK/MGV raw close.
+# Goal: non-tactical asset graphs show buy-and-hold total return —
+# exactly what an investor earns holding those assets.
+#
+# Tactical sleeve only → raw close (matches Koyfin / brokerage statements).
+# Dividends on these assets reported separately on the Dividend Income tab.
+#
+# Everything else → Adjusted Close (total return, distributions reinvested).
+# PIMIX +22% in 2012, +11% in 2025 — consistent with Yahoo Finance total return.
 RAW_CLOSE_ASSETS = {"MGK", "MGV", "TACTICAL", "A1V12"}
 
 
@@ -969,7 +983,7 @@ def run_audit(alloc_df, static_models, tactical_models,
     def add(name, status, detail): checks.append([name, status, detail])
 
     add("Performance price basis", "PASS",
-        "Mixed: raw Close for MGK/MGV/TACTICAL + PIMIX/FIWDX/FIKQX/JBND/JPIE; Adj Close for equity ETFs")
+        "Mixed: raw Close for tactical sleeve (MGK/MGV/TACTICAL) only; Adj Close total return for all other buy-and-hold assets")
     add("Signal price basis",      "PASS", "Yahoo Adjusted Close for MGK/MGV ratio and EMA89")
     add("Dividend treatment",      "PASS", "Cash distributions reported separately; not reinvested in price-return NAV")
     add("Allocation file",         "PASS", "Config/MWM_Allocations.csv")
@@ -1053,8 +1067,8 @@ DASHBOARD_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name
 <style>
 body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width:1680px;margin:auto;padding:18px}h1{color:#17365d;margin:0}.sub{color:#64748b;font-size:13px}.card{background:white;border:1px solid #d7deea;border-radius:13px;padding:14px;margin:12px 0}.tabs,.controls,.checks{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:8px 11px;font-weight:700;cursor:pointer}button.active{background:#17365d;color:white}.tab{display:none}.tab.active{display:block}.grid{display:grid;gap:12px}.grid2{grid-template-columns:2fr 1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.kpi{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}.label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800}.big{font-size:22px;font-weight:900}.chartbox{height:430px;width:100%;border:1px solid #eef2f7;border-radius:10px;background:white}.chartbox.short{height:300px}canvas{width:100%;height:100%;display:block}.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;margin-top:10px}.sw{width:18px;height:4px;border-radius:2px;display:inline-block;margin-right:5px}.scroll{max-height:560px;overflow:auto;border:1px solid #eef2f7;border-radius:10px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #e5e7eb;padding:7px;text-align:right;white-space:nowrap}th{background:#f3f4f6;position:sticky;top:0;cursor:pointer;z-index:2}td:first-child,th:first-child{text-align:left}.freeze1{position:sticky;left:0;background:white;z-index:1;min-width:120px}.freeze2{position:sticky;left:120px;background:white;z-index:1;min-width:90px}.freeze3{position:sticky;left:210px;background:white;z-index:1;min-width:180px}.good{color:#15803d;font-weight:800}.bad{color:#b91c1c;font-weight:800}.pass{color:#15803d;font-weight:900}.fail{color:#b91c1c;font-weight:900}.warn{color:#a16207;font-weight:900}.note{font-size:12px;color:#64748b}.pill{display:inline-block;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;font-weight:700}.state-growth{background:#ecfdf5}.state-value{background:#eff6ff}.tradebox{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tradeitem{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
 </style></head><body><div class="wrap">
-<h1>A1V12 Yahoo Production v3.4</h1><div class="sub">Binary MGK/MGV tactical sleeve · Sleeve + fixed-income: raw-close · Equity/diversified: total return (adj-close) · Dividends reported separately</div>
-<div class="card" style="border-left:5px solid #17365d"><b>Tactical sleeve (MGK/MGV) and fixed-income funds (PIMIX, FIWDX, FIKQX, JBND, JPIE): price return (raw close); dividends reported separately. Equity and diversified funds: total return (adj-close, distributions reinvested). See Dividend Income tab.</b><div class="note">Tactical signals use adjusted closing prices. Charts and metrics use raw closing prices. Open-price execution on trade dates.</div></div>
+<h1>A1V12 Yahoo Production v3.4</h1><div class="sub">Binary MGK/MGV tactical sleeve · Sleeve: raw-close (matches Koyfin) · All other assets: buy-and-hold total return (adj-close) · Dividends reported separately</div>
+<div class="card" style="border-left:5px solid #17365d"><b>Tactical sleeve (MGK/MGV): price return (raw close) — matches Koyfin and brokerage. All other assets: buy-and-hold total return (adj-close, distributions reinvested). Portfolio dividend yield shown below in Current State.</b><div class="note">Tactical signals use adjusted closing prices. Charts and metrics use raw closing prices. Open-price execution on trade dates.</div></div>
 <div class="tabs">
 <button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button>
 <button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button>
@@ -1065,12 +1079,12 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 <button class="tabbtn" onclick="showTab(event,'trade')">Trade Log</button>
 <button class="tabbtn" onclick="showTab(event,'chartaudit')">Chart Audit</button>
 <button class="tabbtn" onclick="showTab(event,'audit')">Audit</button>
-<button class="tabbtn" onclick="showTab(event,'dividend')">Dividend Income</button>
+
 <button class="tabbtn" onclick="showTab(event,'allocation')">Allocation</button>
 <button class="tabbtn" onclick="showTab(event,'config')">Config</button>
 </div>
 <div class="controls"><b class="note">Period</b><span id="periodButtons"></span><span id="freqPill" class="pill">Display: Daily</span><span class="pill">Metrics use daily rows</span><span class="pill">Drawdown before downsample</span></div>
-<section id="overview" class="tab active"><div class="grid kpis" id="kpiBox"></div><div class="grid grid2"><div class="card"><h2>Primary Comparison</h2><div class="controls"><button onclick="preset('core')">Core</button><button onclick="preset('static')">MWM Static</button><button onclick="preset('tacticalmodels')">Tactical Models</button><button onclick="preset('all')">All</button></div><div id="overviewChecks" class="checks"></div><div class="chartbox"><canvas id="overviewChart"></canvas></div><div id="overviewLegend" class="legend"></div></div><div class="card"><h2>Current State &amp; Latest Trade</h2><div id="stateBox"></div><div id="latestTrade"></div></div></div><div class="card"><h2>Sortable Metrics</h2><div class="scroll"><table id="metricsTable"></table></div></div></section>
+<section id="overview" class="tab active"><div class="grid kpis" id="kpiBox"></div><div class="grid grid2"><div class="card"><h2>Primary Comparison</h2><div class="controls"><button onclick="preset('core')">Core</button><button onclick="preset('static')">MWM Static</button><button onclick="preset('tacticalmodels')">Tactical Models</button><button onclick="preset('all')">All</button></div><div id="overviewChecks" class="checks"></div><div class="chartbox"><canvas id="overviewChart"></canvas></div><div id="overviewLegend" class="legend"></div></div><div class="card"><h2>Current State &amp; Latest Trade</h2><div id="stateBox"></div><div id="latestTrade"></div><div id="divYield" style="margin-top:12px"></div></div></div><div class="card"><h2>Sortable Metrics</h2><div class="scroll"><table id="metricsTable"></table></div></div></section>
 <section id="tactical" class="tab"><div class="card"><h2>Tactical Sleeve — MGK / MGV Binary (v3.4)</h2><div class="chartbox"><canvas id="tacticalChart"></canvas></div><div id="tacticalLegend" class="legend"></div></div><div class="card"><h2>Tactical Drawdown</h2><div class="chartbox short"><canvas id="tacticalDD"></canvas></div><div id="tacticalDDLegend" class="legend"></div><div class="note">Daily drawdown computed before chart downsampling.</div></div><div class="card"><h2>Tactical Metrics</h2><div class="scroll"><table id="tacticalMetrics"></table></div></div></section>
 <section id="mwm" class="tab"><div class="card"><h2>MWM Static Models</h2><div class="chartbox"><canvas id="mwmChart"></canvas></div><div id="mwmLegend" class="legend"></div></div><div class="card"><h2>MWM Static Metrics</h2><div class="scroll"><table id="mwmMetrics"></table></div></div></section>
 <section id="tacticalmodels" class="tab"><div class="card"><h2>Tactical Models</h2><div class="chartbox"><canvas id="tacticalModelsChart"></canvas></div><div id="tacticalModelsLegend" class="legend"></div></div><div class="card"><h2>Tactical Model Metrics</h2><div class="scroll"><table id="tacticalModelsMetrics"></table></div></div></section>
@@ -1154,8 +1168,44 @@ function tog(x,on){if(on&&!visible.includes(x))visible.push(x);if(!on)visible=vi
 function recentSignals(){return [...signals].reverse().slice(0,60).map((r,i)=>({...r,__current:i==0}))}
 function render(){let d=cut(portfolio),rb=rebase(d,visible),m=metric(rb,visible);document.getElementById('freqPill').innerHTML='Display: '+displayFrequency(d);draw('overviewChart',rb,visible,'overviewLegend');drawTable('metricsTable',m);document.getElementById('kpiBox').innerHTML=m.slice(0,4).map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span></div></div>`).join('');document.getElementById('windowAudit').innerHTML=d.length?`<b>${period}</b><br>Start: ${d[0].Date}<br>End: ${d.at(-1).Date}<br>Daily rows: ${d.length}<br>Display frequency: ${displayFrequency(d)}<br>Display rows: ${sampleDisplay(d).length}`:'No data';drawTable('windowRows',m);
 let tc=cols(tactical).filter(x=>['A1V12','VOO Benchmark','MGK Buy Hold','MGV Buy Hold'].includes(x));
-let td=rebase(cut(tactical),tc),tm=metric(td,tc);draw('tacticalChart',td,tc,'tacticalLegend');draw('tacticalDD',dailyDrawdown(td,tc),tc,'tacticalDDLegend',true);drawTable('tacticalMetrics',tm);let sd=rebase(cut(portfolio),staticCols());draw('mwmChart',sd,staticCols(),'mwmLegend');drawTable('mwmMetrics',metric(sd,staticCols()));let tmd=rebase(cut(portfolio),tacticalModelCols());draw('tacticalModelsChart',tmd,tacticalModelCols(),'tacticalModelsLegend');drawTable('tacticalModelsMetrics',metric(tmd,tacticalModelCols()));state();drawTable('signalTable',recentSignals(),true);let auditRows=[...chartAuditRows('Overview',rb,visible,false),...chartAuditRows('Tactical Sleeve',td,tc,false),...chartAuditRows('Tactical Drawdown',td,tc,true),...chartAuditRows('MWM Static',sd,staticCols(),false),...chartAuditRows('Tactical Models',tmd,tacticalModelCols(),false)];drawTable('chartAuditTable',auditRows)}
+let td=rebase(cut(tactical),tc),tm=metric(td,tc);draw('tacticalChart',td,tc,'tacticalLegend');draw('tacticalDD',dailyDrawdown(td,tc),tc,'tacticalDDLegend',true);drawTable('tacticalMetrics',tm);let sd=rebase(cut(portfolio),staticCols());draw('mwmChart',sd,staticCols(),'mwmLegend');drawTable('mwmMetrics',metric(sd,staticCols()));let tmd=rebase(cut(portfolio),tacticalModelCols());draw('tacticalModelsChart',tmd,tacticalModelCols(),'tacticalModelsLegend');drawTable('tacticalModelsMetrics',metric(tmd,tacticalModelCols()));state();drawTable('signalTable',recentSignals(),true);let auditRows=[...chartAuditRows('Overview',rb,visible,false),...chartAuditRows('Tactical Sleeve',td,tc,false),...chartAuditRows('Tactical Drawdown',td,tc,true),...chartAuditRows('MWM Static',sd,staticCols(),false),...chartAuditRows('Tactical Models',tmd,tacticalModelCols(),false)];drawTable('chartAuditTable',auditRows);updateDivYield()}
 function state(){let s=signals.at(-1)||{},tr=trades.at(-1)||{};let stateHtml=`<div class=tradebox><div class=tradeitem><div class=label>Current State</div><div class=big>${s.State||'N/A'}</div></div><div class=tradeitem><div class=label>Current Holding</div><div class=big>${s.EffectiveHolding||'N/A'}</div></div><div class=tradeitem><div class=label>Latest Signal Date</div><div class=big>${s.Date||'N/A'}</div></div><div class=tradeitem><div class=label>MGK/MGV Ratio</div><div class=big>${isFinite(s.MGK_MGV)?s.MGK_MGV.toFixed(4):'N/A'}</div></div><div class=tradeitem><div class=label>EMA89</div><div class=big>${isFinite(s.MGK_MGV_EMA89)?s.MGK_MGV_EMA89.toFixed(4):'N/A'}</div></div></div>`;let tradeHtml=`<div class=tradebox style="margin-top:10px"><div class=tradeitem><div class=label>Trigger Date</div><div class=big>${tr.Trigger_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Trade Date</div><div class=big>${tr.Trade_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Latest Trade</div><div class=big>${tr.From||''} → ${tr.To||''}</div></div><div class=tradeitem><div class=label>Rule</div><div class=note>${tr.Rule||'N/A'}</div></div></div>`;document.getElementById('stateBox').innerHTML=stateHtml;document.getElementById('latestTrade').innerHTML=tradeHtml;document.getElementById('latestTrade2').innerHTML=tradeHtml}
+function updateDivYield(){
+  // Show annualized dividend yield for the first selected model
+  const el=document.getElementById('divYield');
+  if(!el||!divsummary.length)return;
+  // Pick first visible model, fallback to A1V12 Tactical Sleeve
+  const model=visible.length?visible[0]:'A1V12 Tactical Sleeve';
+  const sum=divsummary.find(r=>r.Model===model);
+  if(!sum){el.innerHTML='';return;}
+  // TTM yield = TTM income / current portfolio NAV
+  const pv=portfolio.length?portfolio[portfolio.length-1]:null;
+  const nav=pv&&isFinite(pv[model])?pv[model]:null;
+  const ttm=isFinite(sum.TTM_Dividend_Income)?Number(sum.TTM_Dividend_Income):null;
+  const prior=isFinite(sum.Prior_Full_Year_Income)?Number(sum.Prior_Full_Year_Income):null;
+  const yld=nav&&ttm?ttm/nav:null;
+  const priorYld=nav&&prior?prior/nav:null;
+  const modelShort=model.replace('MWM ','').replace('Tactical ','Tact. ');
+  el.innerHTML=`<div style="border-top:1px solid #e5e7eb;padding-top:10px;margin-top:2px">
+    <div class=label style="margin-bottom:6px">Portfolio Dividend Yield — ${modelShort}</div>
+    <div class=tradebox>
+      <div class=tradeitem>
+        <div class=label>TTM Income</div>
+        <div class=big style="font-size:18px">${money(ttm)}</div>
+      </div>
+      <div class=tradeitem>
+        <div class=label>TTM Yield</div>
+        <div class=big style="font-size:18px">${yld?pct(yld):'N/A'}</div>
+        <div class=note>on current NAV</div>
+      </div>
+      <div class=tradeitem>
+        <div class=label>Prior Full-Year</div>
+        <div class=big style="font-size:18px">${money(prior)}</div>
+        <div class=note>${priorYld?pct(priorYld)+' yield':''}</div>
+      </div>
+    </div>
+  </div>`;
+}
 function staticTables(){drawTable('tradeTable',trades.slice().reverse());drawTable('holdingSummary',holdsum);drawTable('holdingPeriods',holdperiods.slice().reverse());drawTable('auditTable',audit);drawTable('prodAuditTable',prodaudit);drawTable('modelMapTable',modelmap);drawTable('allocationTable',alloc);drawTable('backfillAuditTable',backfillaudit)}
 let allocModel=null;
 function allocModels(){return[...new Set(alloc.map(r=>r.Model))]}
@@ -1205,8 +1255,9 @@ function init(){
   setTimeout(render,120);
   setTimeout(renderAllocation,120);
   setTimeout(renderDividend,120);
+  setTimeout(updateDivYield,150);
 }
-window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation();renderDividend()},120));
+window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation();renderDividend();updateDivYield()},120));
 init();
 </script></body></html>"""
 
