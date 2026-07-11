@@ -1293,6 +1293,10 @@ function updateDivYield(){
   el.innerHTML=`<div style="border-top:1px solid #e5e7eb;padding-top:10px;margin-top:2px">
     <div class=label style="margin-bottom:6px">Dividend Yield</div>
     <div class=tradebox>${vooTile}${modelTiles}</div>
+    <div class=note style="margin-top:8px;line-height:1.5">
+      <b>S&amp;P 500:</b> Sum of last 4 VOO quarterly dividends ÷ current VOO price. Standard published yield methodology (Morningstar, Yahoo Finance).<br>
+      <b>Portfolio models:</b> Trailing 12-month cash distributions from actual share ledger ÷ current portfolio NAV. Reflects blended yield of holdings — e.g. tactical sleeve income is sourced from MGK or MGV based on what was actually held on each ex-dividend date.
+    </div>
   </div>`;
 }
 function staticTables(){drawTable('tradeTable',trades.slice().reverse());drawTable('holdingSummary',holdsum);drawTable('holdingPeriods',holdperiods.slice().reverse());drawTable('auditTable',audit);drawTable('prodAuditTable',prodaudit);drawTable('modelMapTable',modelmap);drawTable('allocationTable',alloc);drawTable('backfillAuditTable',backfillaudit)}
