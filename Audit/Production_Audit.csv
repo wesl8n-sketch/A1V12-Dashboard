@@ -1,5 +1,5 @@
 Check,Status,Detail
-Performance price basis,PASS,Mixed: raw Close for MGK/MGV/TACTICAL; Adj Close (total return) for all other assets
+Performance price basis,PASS,Mixed: raw Close for MGK/MGV/TACTICAL + PIMIX/FIWDX/FIKQX/JBND/JPIE; Adj Close for equity ETFs
 Signal price basis,PASS,Yahoo Adjusted Close for MGK/MGV ratio and EMA89
 Dividend treatment,PASS,Cash distributions reported separately; not reinvested in price-return NAV
 Allocation file,PASS,Config/MWM_Allocations.csv
