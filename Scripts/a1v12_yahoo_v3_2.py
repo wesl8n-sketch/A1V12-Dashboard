@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-A1V12 Yahoo Production v3.4 (Raw-Close Performance + Dividend Income)
+A1V12 Yahoo Production v3.6 (Raw Benchmark + Adjusted Model Allocations)
 
 Complete integrated package.
+
+v3.5 benchmark/model price-basis architecture:
+- A1V12 tactical sleeve: raw Close for NAV/charts/metrics.
+- VOO benchmark: raw Close for NAV/charts/metrics, matching the tactical sleeve.
+- VOO when held inside an MWM allocation model: Adjusted Close.
+- All other allocation assets inside models: Adjusted Close.
+- Tactical signals: Adjusted Close for the MGK/MGV ratio.
+- Dividends remain reported separately from the raw-close tactical and benchmark series.
 
 Production methodology:
 - Tactical sleeve (MGK/MGV): raw Close for NAV/charts/metrics.
@@ -10,8 +18,10 @@ Production methodology:
 - All other assets: Adjusted Close (total return, buy-and-hold).
   Graphs reflect actual investor return including reinvested distributions.
   PIMIX +22% in 2012, +11% in 2025 — matches Yahoo Finance total return.
-- Tactical signals: Adjusted Close for MGK/MGV ratio (unchanged).
+- Tactical signals: configurable via SIGNAL_PRICE_BASIS. Default is Adjusted
+  Close for MGK/MGV ratio; Raw Close can be selected for research comparison.
 - RAW_CLOSE_ASSETS = {MGK, MGV, TACTICAL, A1V12} only.
+- VOO benchmark uses a dedicated raw-close series; VOO allocations in models remain adjusted-close.
 
 v3.4.5 patch:
 - Workbook-first price sourcing: MGK, MGV, BIL, VEU, JIVE, AVUV, VOO
@@ -134,6 +144,33 @@ ASSET_ALIASES = {
 TACTICAL_REPLACEMENT_CANDIDATES = {"MGK", "XLG", "VOO"}
 COOLDOWN_DAYS = 3
 
+# Signal research switch.  This affects only the MGK/MGV ratio and EMA89
+# crossover calculation; it does not change the tactical NAV, benchmark,
+# model-allocation price basis, or dividend accounting.
+#
+# Allowed values:
+#   "ADJUSTED" — recommended production setting; measures relative total-return
+#                leadership and avoids ex-dividend distortions.
+#   "RAW"      — research setting; uses unadjusted closing prices.
+SIGNAL_PRICE_BASIS = "ADJUSTED"
+
+
+def _normalise_signal_price_basis(value):
+    basis = str(value).strip().upper().replace(" CLOSE", "")
+    aliases = {
+        "ADJ": "ADJUSTED",
+        "ADJUSTED": "ADJUSTED",
+        "TOTAL RETURN": "ADJUSTED",
+        "RAW": "RAW",
+        "CLOSE": "RAW",
+        "PRICE": "RAW",
+    }
+    if basis not in aliases:
+        raise ValueError(
+            f"Invalid SIGNAL_PRICE_BASIS={value!r}. Use 'ADJUSTED' or 'RAW'."
+        )
+    return aliases[basis]
+
 # Assets priced on raw Close in the portfolio NAV.
 # Goal: non-tactical asset graphs show buy-and-hold total return —
 # exactly what an investor earns holding those assets.
@@ -144,6 +181,11 @@ COOLDOWN_DAYS = 3
 # Everything else → Adjusted Close (total return, distributions reinvested).
 # PIMIX +22% in 2012, +11% in 2025 — consistent with Yahoo Finance total return.
 RAW_CLOSE_ASSETS = {"MGK", "MGV", "TACTICAL", "A1V12"}
+
+# Dedicated internal key for the standalone benchmark.  This allows the same
+# VOO security to use raw Close as a benchmark while retaining Adjusted Close
+# whenever VOO appears as an allocation inside an MWM model.
+VOO_RAW_BENCHMARK_KEY = "__VOO_RAW_BENCHMARK__"
 
 # Workbook price sources — assets whose full price history is read from the
 # local Excel workbook (backfilled to 2007) rather than Yahoo Finance.
@@ -735,95 +777,112 @@ def ema(s, n):
     return s.ewm(span=n, adjust=False, min_periods=1).mean()
 
 
-def build_signals(comp_adj):
+def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS):
     """
-    v3.4 signal engine — binary MGK/MGV, no JIVE.
-    Signal computed on Adjusted Close ratio vs EMA89.
+    Binary MGK/MGV signal engine with a configurable signal price basis.
 
-    Execution: strictly look-ahead free.
-      - position[i] set by raw_signal[i] (today's closing prices)
-      - effective_position[i] = position[i-1]  (yesterday's decision)
-      - EffectiveHolding[i] reflects the trade that executes at day i open
-      - Return on day i earned on the holding chosen the PRIOR day
-      - Trade date = T+1 (next day after crossover confirmed)
-      - Trade executes at T+1 opening price (in build_tactical_values)
-    3-day uniform cooldown applied to position[] before the shift.
+    signal_price_basis:
+      - "ADJUSTED" (recommended): MGK/MGV adjusted-close ratio vs EMA89.
+      - "RAW": MGK/MGV raw-close ratio vs EMA89 for research comparison.
+
+    The selected basis affects only signal generation. Tactical NAV remains
+    raw-close, standalone VOO benchmark remains raw-close, and allocation
+    models continue to use adjusted-close prices.
+
+    Execution is strictly look-ahead free:
+      - decision_position[i] is determined after day i closes;
+      - effective_position[i+1] applies that decision at the next open;
+      - trades execute at T+1 open in build_tactical_values().
     """
     import pandas as pd
 
-    df  = comp_adj.dropna(subset=["MGK", "MGV"]).copy().sort_values("Date").reset_index(drop=True)
+    basis = _normalise_signal_price_basis(signal_price_basis)
+    if basis == "RAW":
+        if comp_raw is None:
+            raise ValueError("comp_raw is required when SIGNAL_PRICE_BASIS='RAW'.")
+        source = comp_raw
+        basis_label = "Raw Close"
+    else:
+        source = comp_adj
+        basis_label = "Adjusted Close"
+
+    df = (source.dropna(subset=["MGK", "MGV"]).copy()
+          .sort_values("Date").reset_index(drop=True))
+    if df.empty:
+        raise RuntimeError(f"No MGK/MGV data available for {basis_label} signals.")
+
     sig = pd.DataFrame({"Date": df["Date"], "MGK": df["MGK"], "MGV": df["MGV"]})
-    sig["MGK_MGV"]       = sig["MGK"] / sig["MGV"]
+    sig["Signal_Price_Basis"] = basis_label
+    sig["MGK_MGV"] = sig["MGK"] / sig["MGV"]
     sig["MGK_MGV_EMA89"] = ema(sig["MGK_MGV"], 89)
 
     raw_signal = (sig["MGK_MGV"] > sig["MGK_MGV_EMA89"]).astype(int).values
     n = len(sig)
-    position    = [0] * n
-    position[0] = raw_signal[0]
-    days_since  = COOLDOWN_DAYS
+    decision_position = [0] * n
+    decision_position[0] = raw_signal[0]
+    days_since = COOLDOWN_DAYS
 
     for i in range(1, n):
         days_since += 1
-        if raw_signal[i] != position[i - 1] and days_since >= COOLDOWN_DAYS:
-            position[i] = raw_signal[i]
-            days_since  = 0
+        if (raw_signal[i] != decision_position[i - 1]
+                and days_since >= COOLDOWN_DAYS):
+            decision_position[i] = raw_signal[i]
+            days_since = 0
         else:
-            position[i] = position[i - 1]
+            decision_position[i] = decision_position[i - 1]
 
-    # ── T+1 execution — correct look-ahead-free signal shift ─────────────
-    # position[i] is determined by raw_signal[i] (today's closing prices).
-    # The decision cannot be acted on until the NEXT trading day's open.
-    # So the effective holding on day i must be based on position[i-1].
-    #
-    # Shift:  effective_position[i] = position[i-1]
-    #         Trigger date = day i-1  (when crossover was detected)
-    #         Trade date   = day i    (when order executes at open)
-    #         EffectiveHolding[i] reflects the new holding from open of day i
-    #
-    # This eliminates same-day look-ahead bias where position[i] (set by
-    # today's close) was incorrectly used to earn today's return.
-
-    # Shift position forward by 1: day 0 keeps initial holding
-    effective_position = [position[0]] + list(position[:-1])
+    # A decision made using today's close becomes effective at tomorrow's open.
+    effective_position = [decision_position[0]] + list(decision_position[:-1])
 
     holdings_list = []
-    trades_list   = []
-    current_holding = "MGV" if effective_position[0] == 0 else "MGK"
-    holdings_list.append([sig["Date"].iloc[0],
-                          "Growth" if current_holding == "MGK" else "Value",
-                          current_holding])
+    trades_list = []
+    current_holding = "MGK" if effective_position[0] == 1 else "MGV"
+    holdings_list.append([
+        sig["Date"].iloc[0],
+        "Growth" if current_holding == "MGK" else "Value",
+        current_holding,
+        basis_label,
+    ])
 
     for i in range(1, n):
         new_holding = "MGK" if effective_position[i] == 1 else "MGV"
-        new_state   = "Growth" if new_holding == "MGK" else "Value"
+        new_state = "Growth" if new_holding == "MGK" else "Value"
         if effective_position[i] != effective_position[i - 1]:
-            # Trigger: the day the crossover was confirmed (position changed)
-            # That is day i-1 in position[] = day i-2 in effective_position[]
-            # but labelled as the day the raw signal fired = position[i] != position[i-1]
-            # which is effective_position[i+1] != effective_position[i] lookahead
-            # Simpler: trigger = yesterday (sig date i-1), trade = today (sig date i)
             trigger_date = sig["Date"].iloc[i - 1]
-            trade_date   = sig["Date"].iloc[i]
-            rule = (f"Next trading day after trigger "
-                    f"(EMA89 crossover, {COOLDOWN_DAYS}-day cooldown)")
-            trades_list.append([trade_date, trigger_date,
-                                 current_holding, new_holding, new_state, rule])
+            trade_date = sig["Date"].iloc[i]
+            rule = (f"Next trading day after trigger (EMA89 crossover, "
+                    f"{COOLDOWN_DAYS}-day cooldown, {basis_label} signal)")
+            trades_list.append([
+                trade_date, trigger_date, current_holding, new_holding,
+                new_state, basis_label, rule,
+            ])
             current_holding = new_holding
-        holdings_list.append([sig["Date"].iloc[i], new_state, current_holding])
+        holdings_list.append([sig["Date"].iloc[i], new_state,
+                              current_holding, basis_label])
 
-    h   = pd.DataFrame(holdings_list, columns=["Date","State","EffectiveHolding"])
-    sig = sig.merge(h, on="Date", how="left")
+    h = pd.DataFrame(
+        holdings_list,
+        columns=["Date", "State", "EffectiveHolding", "Signal_Price_Basis"],
+    )
+    sig = sig.drop(columns=["Signal_Price_Basis"]).merge(h, on="Date", how="left")
 
-    front = ["Date","State","EffectiveHolding","MGK","MGV","MGK_MGV","MGK_MGV_EMA89"]
-    sig   = sig[front + [c for c in sig.columns if c not in front]]
+    front = ["Date", "State", "EffectiveHolding", "Signal_Price_Basis",
+             "MGK", "MGV", "MGK_MGV", "MGK_MGV_EMA89"]
+    sig = sig[front + [c for c in sig.columns if c not in front]]
 
-    trades_df  = pd.DataFrame(trades_list,
-        columns=["Trade_Date","Trigger_Date","From","To","New_State","Rule"])
+    trades_df = pd.DataFrame(
+        trades_list,
+        columns=["Trade_Date", "Trigger_Date", "From", "To", "New_State",
+                 "Signal_Price_Basis", "Rule"],
+    )
 
     port_start = pd.to_datetime(PORTFOLIO_START)
-    sig[sig["Date"]               >= port_start].to_csv(DATA / "Signal_History.csv", index=False, date_format="%Y-%m-%d")
-    h[h["Date"]                   >= port_start].to_csv(DATA / "Daily_Holdings.csv", index=False, date_format="%Y-%m-%d")
-    trades_df[trades_df["Trade_Date"] >= port_start].to_csv(DATA / "Trade_Ledger.csv", index=False, date_format="%Y-%m-%d")
+    sig[sig["Date"] >= port_start].to_csv(
+        DATA / "Signal_History.csv", index=False, date_format="%Y-%m-%d")
+    h[h["Date"] >= port_start].to_csv(
+        DATA / "Daily_Holdings.csv", index=False, date_format="%Y-%m-%d")
+    trades_df[trades_df["Trade_Date"] >= port_start].to_csv(
+        DATA / "Trade_Ledger.csv", index=False, date_format="%Y-%m-%d")
 
     return sig, trades_df
 
@@ -931,72 +990,93 @@ def build_tactical_values(comp_raw, comp_open, sig):
 
 def build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models):
     """
-    Mixed price-basis NAV for all models.
+    Build portfolio NAV with purpose-specific price bases.
 
-    Price basis per asset
-    ---------------------
-    RAW_CLOSE_ASSETS (MGK, MGV, TACTICAL) — raw closing prices.
-        Returns reflect price movement only; dividends reported separately.
-    All other assets — Adjusted Close prices (total return).
-        Distributions automatically reinvested via adj-close pricing.
+    Standalone comparison series
+    ----------------------------
+    A1V12 Tactical Sleeve — raw Close.
+    VOO Benchmark          — raw Close.
 
-    Annual rebalancing for multi-asset models.
-    Writes Portfolio_Daily_Share_Ledger.csv.
-    Returns (vals, ledger).
+    Allocation models
+    -----------------
+    TACTICAL/A1V12 sleeves — raw-close tactical synthetic NAV.
+    VOO held in a model    — Adjusted Close.
+    Every other asset      — Adjusted Close.
+
+    This produces an apples-to-apples raw-price comparison between A1V12 and
+    its standalone VOO benchmark, while preserving total-return accounting for
+    VOO and other buy-and-hold allocations inside static and tactical models.
+
+    Annual rebalancing applies to multi-asset models.  The standalone tactical
+    sleeve and standalone VOO benchmark are not rebalanced.
+
+    Writes Portfolio_Daily_Share_Ledger.csv and returns (vals, ledger).
     """
     import pandas as pd
     import numpy as np
 
     NO_REBALANCE = {"A1V12 Tactical Sleeve", "VOO Benchmark"}
 
+    # The standalone benchmark deliberately references a dedicated raw-close
+    # column.  Model allocations continue to reference ordinary "VOO", which
+    # is overwritten below with adjusted-close prices.
     all_models = {
-        "VOO Benchmark":          {"VOO": 1.0},
-        "A1V12 Tactical Sleeve":  {"TACTICAL": 1.0},
+        "VOO Benchmark":         {VOO_RAW_BENCHMARK_KEY: 1.0},
+        "A1V12 Tactical Sleeve": {"TACTICAL": 1.0},
     }
     all_models.update(static_models)
     all_models.update(tactical_models)
 
-    # Build unified price frame using comp_raw as the date spine.
-    # RAW_CLOSE_ASSETS keep raw close prices.
-    # All other assets are overlaid with adj-close (total return).
-    df = comp_raw.merge(tv[["Date","A1V12"]], on="Date", how="inner"
-                        ).sort_values("Date").reset_index(drop=True)
+    # Start from raw prices so the tactical assets and raw VOO benchmark are
+    # available on the same date spine.
+    df = comp_raw.merge(
+        tv[["Date", "A1V12"]], on="Date", how="inner"
+    ).sort_values("Date").reset_index(drop=True)
     df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
     df["TACTICAL"] = df["A1V12"]
 
-    # Overlay adj-close for non-RAW assets
+    if "VOO" not in df.columns:
+        raise ValueError("VOO raw-close data is required for the standalone benchmark.")
+
+    # Preserve raw VOO before replacing ordinary VOO with adjusted close.
+    df[VOO_RAW_BENCHMARK_KEY] = pd.to_numeric(df["VOO"], errors="coerce")
+
+    # Overlay adjusted-close prices for allocation assets.  Ordinary VOO is
+    # intentionally included here, so VOO allocations in models use total
+    # return while the dedicated benchmark column remains raw close.
     adj = comp_adj.copy()
     adj["Date"] = pd.to_datetime(adj["Date"])
-    df["Date"]  = pd.to_datetime(df["Date"])
+    df["Date"] = pd.to_datetime(df["Date"])
     adj = adj[adj["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
     adj_idx = adj.set_index("Date")
+
     for col in adj.columns:
         if col == "Date" or col in RAW_CLOSE_ASSETS:
             continue
         if col in df.columns:
             df[col] = df["Date"].map(adj_idx[col])
 
-    vals        = pd.DataFrame({"Date": df["Date"]})
+    vals = pd.DataFrame({"Date": df["Date"]})
     ledger_rows = []
 
     for name, weights in all_models.items():
         keyed = {
-            ("TACTICAL" if a in {"TACTICAL","A1V12"} else a): float(w)
-            for a, w in weights.items()
+            ("TACTICAL" if asset in {"TACTICAL", "A1V12"} else asset): float(weight)
+            for asset, weight in weights.items()
         }
-        keyed = {k: w for k, w in keyed.items() if k in df.columns}
+        keyed = {asset: weight for asset, weight in keyed.items() if asset in df.columns}
         total_w = sum(keyed.values())
         if not keyed or total_w <= 0:
             continue
-        keyed = {k: w / total_w for k, w in keyed.items()}
+        keyed = {asset: weight / total_w for asset, weight in keyed.items()}
 
-        shares   = {}
+        shares = {}
         for asset, weight in keyed.items():
             px = float(df.loc[0, asset])
             if np.isfinite(px) and px > 0:
                 shares[asset] = BASE_VALUE * weight / px
 
-        nav      = []
+        nav = []
         cur_year = pd.Timestamp(df.loc[0, "Date"]).year
 
         for i in range(len(df)):
@@ -1004,7 +1084,7 @@ def build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models):
 
             if (i > 0 and name not in NO_REBALANCE and len(shares) > 1
                     and dt.year != cur_year):
-                prev_i      = i - 1
+                prev_i = i - 1
                 total_value = sum(
                     sh * float(df.loc[prev_i, asset])
                     for asset, sh in shares.items()
@@ -1015,20 +1095,33 @@ def build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models):
                     px = float(df.loc[prev_i, asset])
                     if np.isfinite(px) and px > 0:
                         new_shares[asset] = total_value * weight / px
-                shares   = new_shares
+                shares = new_shares
                 cur_year = dt.year
 
             total = 0.0
             for asset, sh in shares.items():
-                px    = float(df.loc[i, asset])
+                px = float(df.loc[i, asset])
                 value = sh * px if np.isfinite(px) else 0.0
                 total += value
+
+                # Use the actual security ticker in the dividend ledger so the
+                # raw-close VOO benchmark still receives VOO cash distributions.
+                ledger_asset = "VOO" if asset == VOO_RAW_BENCHMARK_KEY else asset
+                if asset == VOO_RAW_BENCHMARK_KEY:
+                    price_basis = "Raw Close Benchmark"
+                elif asset in {"TACTICAL", "A1V12", "MGK", "MGV"}:
+                    price_basis = "Raw Close"
+                else:
+                    price_basis = "Adjusted Close"
+
                 ledger_rows.append({
-                    "Date":           dt,
-                    "Model":          name,
-                    "Asset":          asset,
-                    "Shares":         sh,
-                    "Price":          px,  # raw close for sleeve; adj close for other assets
+                    "Date": dt,
+                    "Model": name,
+                    "Asset": ledger_asset,
+                    "Internal_Asset": asset,
+                    "Price_Basis": price_basis,
+                    "Shares": sh,
+                    "Price": px,
                     "Position_Value": value,
                 })
             nav.append(total)
@@ -1036,16 +1129,19 @@ def build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models):
         vals[name] = nav
 
     ledger = pd.DataFrame(ledger_rows)
-    ledger.to_csv(DATA / "Portfolio_Daily_Share_Ledger.csv",
-                  index=False, date_format="%Y-%m-%d")
+    ledger.to_csv(
+        DATA / "Portfolio_Daily_Share_Ledger.csv",
+        index=False,
+        date_format="%Y-%m-%d",
+    )
 
     # Dec 31 YTD anchor
-    dates_ts  = pd.to_datetime(vals["Date"])
+    dates_ts = pd.to_datetime(vals["Date"])
     latest_yr = dates_ts.dt.year.max()
-    prior_yr  = latest_yr - 1
+    prior_yr = latest_yr - 1
     prior_mask = dates_ts.dt.year == prior_yr
     if prior_mask.any():
-        last_prior      = vals[prior_mask].iloc[-1].copy()
+        last_prior = vals[prior_mask].iloc[-1].copy()
         last_prior_date = pd.to_datetime(last_prior["Date"])
         if not (last_prior_date.month == 12 and last_prior_date.day == 31):
             anchor = last_prior.copy()
@@ -1054,8 +1150,11 @@ def build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models):
             vals["Date"] = pd.to_datetime(vals["Date"]).dt.strftime("%Y-%m-%d")
             vals = vals.sort_values("Date").reset_index(drop=True)
 
-    vals.to_csv(DATA / "Portfolio_Daily_Values.csv",
-                index=False, date_format="%Y-%m-%d")
+    vals.to_csv(
+        DATA / "Portfolio_Daily_Values.csv",
+        index=False,
+        date_format="%Y-%m-%d",
+    )
     return vals, ledger
 
 
@@ -1312,14 +1411,17 @@ def run_audit(alloc_df, static_models, tactical_models,
     def add(name, status, detail): checks.append([name, status, detail])
 
     add("Performance price basis", "PASS",
-        "Mixed: raw Close for tactical sleeve (MGK/MGV/TACTICAL) only; Adj Close total return for all other buy-and-hold assets")
-    add("Signal price basis",      "PASS", "Yahoo Adjusted Close for MGK/MGV ratio and EMA89")
+        "Standalone A1V12 and VOO benchmark use raw Close; VOO and all other buy-and-hold allocations inside models use Adjusted Close")
+    add("VOO benchmark basis", "PASS",
+        "VOO Benchmark is raw Close; ordinary VOO model allocations remain Adjusted Close")
+    add("Signal price basis",      "PASS",
+        f"{_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close for MGK/MGV ratio and EMA89; configurable via SIGNAL_PRICE_BASIS")
     add("Dividend treatment",      "PASS", "Cash distributions reported separately; not reinvested in price-return NAV")
     add("Allocation file",         "PASS", "Config/MWM_Allocations.csv")
     add("Allocation rows",         "PASS", str(len(alloc_df)))
     add("Static MWM models",       "PASS", ", ".join(static_models.keys()))
     add("Tactical models",         "PASS", ", ".join(tactical_models.keys()))
-    add("Tactical sleeve",         "PASS", "Binary MGK/MGV — no JIVE (v3.4)")
+    add("Tactical sleeve",         "PASS", "Binary MGK/MGV — no JIVE (v3.5)")
     add("EMA warmup",              "PASS",
         f"Price history from {START_DATE}; EMA89 warm by {PORTFOLIO_START}; "
         f"portfolio NAV starts from {PORTFOLIO_START}")
@@ -1447,7 +1549,7 @@ def build_dashboard():
     return out
 
 
-DASHBOARD_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>A1V12 Yahoo Production v3.4</title>
+DASHBOARD_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>A1V12 Yahoo Production v3.6</title>
 <style>
 body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width:1680px;margin:auto;padding:18px}h1{color:#17365d;margin:0}.sub{color:#64748b;font-size:13px}.card{background:white;border:1px solid #d7deea;border-radius:13px;padding:14px;margin:12px 0}.tabs,.controls,.checks{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:8px 11px;font-weight:700;cursor:pointer}button.active{background:#17365d;color:white}.tab{display:none}.tab.active{display:block}.grid{display:grid;gap:12px}.grid2{grid-template-columns:2fr 1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.kpi{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}.label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800}.big{font-size:22px;font-weight:900}.chartbox{height:430px;width:100%;border:1px solid #eef2f7;border-radius:10px;background:white}.chartbox.short{height:300px}canvas{width:100%;height:100%;display:block}.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;margin-top:10px}.sw{width:18px;height:4px;border-radius:2px;display:inline-block;margin-right:5px}.scroll{max-height:560px;overflow:auto;border:1px solid #eef2f7;border-radius:10px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #e5e7eb;padding:7px;text-align:right;white-space:nowrap}th{background:#f3f4f6;position:sticky;top:0;cursor:pointer;z-index:2}td:first-child,th:first-child{text-align:left}.freeze1{position:sticky;left:0;background:white;z-index:1;min-width:120px}.freeze2{position:sticky;left:120px;background:white;z-index:1;min-width:90px}.freeze3{position:sticky;left:210px;background:white;z-index:1;min-width:180px}.good{color:#15803d;font-weight:800}.bad{color:#b91c1c;font-weight:800}.pass{color:#15803d;font-weight:900}.fail{color:#b91c1c;font-weight:900}.warn{color:#a16207;font-weight:900}.note{font-size:12px;color:#64748b}.pill{display:inline-block;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;font-weight:700}.state-growth{background:#ecfdf5}.state-value{background:#eff6ff}.tradebox{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tradeitem{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
 </style></head><body><div class="wrap">
@@ -1592,7 +1694,7 @@ function updateDivYield(){
   }
 
   function shortName(m){
-    if(m==='VOO Benchmark')return 'S&P 500';
+    if(m==='VOO Benchmark')return 'S&P 500 (Raw Close)';
     return m.replace('MWM ','').replace('Tactical ','').replace(' Plus','+');
   }
 
@@ -1604,7 +1706,7 @@ function updateDivYield(){
 
   // Build S&P 500 tile first
   const vooTile=`<div class=tradeitem style="border:2px solid #17365d">
-    <div class=label>S&amp;P 500</div>
+    <div class=label>S&amp;P 500 · Raw Close Benchmark</div>
     <div class=big style="font-size:20px">${vooYld?pct(vooYld):'—'}</div>
     <div class=note>Last 4 divs ÷ price</div>
   </div>`;
@@ -1685,7 +1787,7 @@ init();
 
 
 def main():
-    print("BUILD: A1V12 Yahoo Production v3.4")
+    print("BUILD: A1V12 Yahoo Production v3.6")
     print("Script compiled: 2026-07-12 01:15 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
     backup = backup_existing_outputs()
@@ -1717,7 +1819,7 @@ def main():
 
     div_comp = build_dividend_composites(div_wide, raw_scale, required_assets)
 
-    sig, trades          = build_signals(comp_adj)
+    sig, trades          = build_signals(comp_adj, comp_raw, SIGNAL_PRICE_BASIS)
     tv                   = build_tactical_values(comp_raw, comp_open, sig)
     pv, portfolio_ledger = build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models)
     build_holding_analytics(sig, comp_raw)
@@ -1731,9 +1833,10 @@ def main():
               comp_adj, comp_raw, sig, trades, tv, pv, data_audit_df)
     dash = build_dashboard()
 
-    print("\nA1V12 Yahoo Production v3.4 complete.")
-    print(f"Signal engine:   Adjusted Close · Binary MGK/MGV · EMA89 · {COOLDOWN_DAYS}-day cooldown")
-    print("Performance:     Raw Close price return · open-price execution on trade dates")
+    print("\nA1V12 Yahoo Production v3.6 complete.")
+    print(f"Signal engine:   {_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close · Binary MGK/MGV · EMA89 · {COOLDOWN_DAYS}-day cooldown")
+    print("Performance:     A1V12 + VOO benchmark raw Close; model allocations adjusted Close")
+    print("VOO methodology: Raw benchmark · Adjusted Close when held inside models")
     print("Dividend income: Separate model-level cash-income reporting")
     print("Rebalancing:     Annual (Jan 1) for all multi-asset models")
     print("Static models:  ", ", ".join(static_models.keys()))
