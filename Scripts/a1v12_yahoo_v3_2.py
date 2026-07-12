@@ -1661,7 +1661,7 @@ init();
 
 def main():
     print("BUILD: A1V12 Yahoo Production v3.4")
-    print("Script compiled: 2026-07-11 22:11 UTC")
+    print("Script compiled: 2026-07-12 00:58 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
