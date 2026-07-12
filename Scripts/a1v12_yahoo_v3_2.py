@@ -154,14 +154,15 @@ RAW_CLOSE_ASSETS = {"MGK", "MGV", "TACTICAL", "A1V12"}
 # Tuple: (sheet_name, close_col, adj_col, open_col_or_None)
 # Workbook path resolved relative to Config/ folder at runtime.
 WORKBOOK_SOURCES = {
-    "MGK": ("MGK Daily 29MAY",  "MGK Close",   "MGK Adj. Close",  "MGK Open"),
-    "MGV": ("MGV Daily 29MAY",  "MGV Close",   "MGV Adj. Close",  "MGV Open"),
-    "BIL": ("BIL daily",        "BIL Close",   "BIL Adj. Close",  "BIL Open"),
-    "VEU": ("VEU daily 29MAY",  "VEU Close",   "VEU Adj. Close",  "VEU Open"),
-    "JIVE":("JIVE Daily 29MAY", "JIVE Close",  "JIVE Adj. Close", None),
-    "AVUV":("AVUV Daily",       "AVUV Close",  "AVUV Adj. Close", None),
-    # VOO sourced from VFINX (long-history Vanguard mutual fund proxy)
-    "VOO": ("VFINX Daily",      "VFINX Close", None,              None),
+    # Sheet names match Master_workbook_BackfilledPre2016.xlsx as generated
+    # by the dashboard tooling (sheets named by asset ticker, not original names)
+    "MGK": ("MGK",  "Close", "Adj_Close", "Open"),
+    "MGV": ("MGV",  "Close", "Adj_Close", "Open"),
+    "BIL": ("BIL",  "Close", "Adj_Close", "Open"),
+    "VEU": ("VEU",  "Close", "Adj_Close", "Open"),
+    "JIVE":("JIVE", "Close", "Adj_Close", "Open"),
+    "AVUV":("AVUV", "Close", "Adj_Close", "Open"),
+    "VOO": ("VOO",  "Close", "Adj_Close", "Open"),
 }
 # Relative path from project root to the backfilled workbook
 WORKBOOK_FILE = "Config/Master_workbook_BackfilledPre2016.xlsx"
