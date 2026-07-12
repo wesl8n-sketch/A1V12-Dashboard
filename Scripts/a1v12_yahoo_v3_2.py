@@ -1696,8 +1696,12 @@ def main():
     tv                   = build_tactical_values(comp_raw, comp_open, sig)
     pv, portfolio_ledger = build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models)
     build_holding_analytics(sig, comp_raw)
-    build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
-                             portfolio_ledger, static_models, tactical_models)
+    try:
+        build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
+                                 portfolio_ledger, static_models, tactical_models)
+    except Exception as _div_err:
+        print(f"  ERROR in build_dividend_analytics: {_div_err}")
+        import traceback; traceback.print_exc()
     run_audit(alloc_df, static_models, tactical_models,
               comp_adj, comp_raw, sig, trades, tv, pv, data_audit_df)
     dash = build_dashboard()
