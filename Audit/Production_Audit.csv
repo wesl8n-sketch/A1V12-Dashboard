@@ -1,12 +1,13 @@
 Check,Status,Detail
-Performance price basis,PASS,Mixed: raw Close for tactical sleeve (MGK/MGV/TACTICAL) only; Adj Close total return for all other buy-and-hold assets
-Signal price basis,PASS,Yahoo Adjusted Close for MGK/MGV ratio and EMA89
+Performance price basis,PASS,Standalone A1V12 and VOO benchmark use raw Close; VOO and all other buy-and-hold allocations inside models use Adjusted Close
+VOO benchmark basis,PASS,VOO Benchmark is raw Close; ordinary VOO model allocations remain Adjusted Close
+Signal price basis,PASS,Adjusted Close for MGK/MGV ratio and EMA89; configurable via SIGNAL_PRICE_BASIS
 Dividend treatment,PASS,Cash distributions reported separately; not reinvested in price-return NAV
 Allocation file,PASS,Config/MWM_Allocations.csv
 Allocation rows,PASS,82
 Static MWM models,PASS,"MWM Aggressive, MWM Balanced, MWM Conservative, MWM Growth, MWM Growth Plus, MWM Moderate, MWM Ultra Aggressive"
 Tactical models,PASS,"Tactical Aggressive, Tactical Balanced, Tactical Conservative, Tactical Growth, Tactical Growth Plus, Tactical Moderate, Tactical Ultra Aggressive"
-Tactical sleeve,PASS,Binary MGK/MGV — no JIVE (v3.4)
+Tactical sleeve,PASS,Binary MGK/MGV — no JIVE (v3.5)
 EMA warmup,PASS,Price history from 2008-01-01; EMA89 warm by 2011-01-01; portfolio NAV starts from 2011-01-01
 Cooldown rule,PASS,"3 trading days after any trade (Growth<->Value, uniform)"
 Open-price execution,PASS,Trade-day return split at open price; fallback to prior close if open missing
