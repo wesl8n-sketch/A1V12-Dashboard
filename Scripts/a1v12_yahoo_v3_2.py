@@ -460,7 +460,7 @@ def download_prices(required_assets):
                                           ignore_index=True).sort_values("Date")
                         print(f"  Gap-filled {asset} to {wb_df['Date'].max().date()}")
 
-                    # Dividends for gap period
+                    # Dividends for gap period (recent)
                     gap_div_rows = pd.DataFrame({
                         "Date":  gap_idx,
                         asset:   gap_div.values,
@@ -469,6 +469,22 @@ def download_prices(required_assets):
                                       .drop_duplicates("Date"))
             except Exception as ge:
                 print(f"  WARNING: gap-fill failed for {asset}: {ge}")
+
+            # Full dividend history for workbook assets via dedicated endpoint
+            # (workbook has no dividend sheet — needed for TTM yield calculation)
+            try:
+                full_divs = _clean_div_series(
+                    yf.Ticker(sym).dividends, asset, sym)
+                if len(full_divs) > 0:
+                    full_div_rows = pd.DataFrame({
+                        "Date": full_divs.index,
+                        asset:  full_divs.values,
+                    })
+                    div_frames.append(full_div_rows[full_div_rows[asset].abs() > 1e-12]
+                                      .drop_duplicates("Date"))
+                    print(f"  {asset} full dividends: {len(full_divs)} events")
+            except Exception as de:
+                print(f"  WARNING: full dividend fetch failed for {asset}: {de}")
 
             def wb_frame(col, label):
                 if col not in wb_df.columns:
