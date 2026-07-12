@@ -1097,6 +1097,14 @@ def build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
     opens  = opens.merge(prices[["Date"]], on="Date", how="right")
     divs   = divs.merge(prices[["Date"]], on="Date", how="right").fillna(0.0)
 
+    # Diagnostic: show dividend coverage for key assets
+    for _a in ["MGK", "MGV", "VOO", "AVUV"]:
+        if _a in divs.columns:
+            _n = (divs[_a].abs() > 1e-12).sum()
+            print(f"  div_comp {_a}: {_n} non-zero events in portfolio window")
+        else:
+            print(f"  div_comp {_a}: COLUMN MISSING")
+
     hold = sig[["Date","EffectiveHolding"]].copy()
     hold["Date"] = pd.to_datetime(hold["Date"])
     hold = hold.merge(prices[["Date"]], on="Date", how="right")
