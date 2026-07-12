@@ -610,10 +610,27 @@ def download_prices(required_assets):
         raise RuntimeError("No Yahoo price data downloaded.")
 
     def merge_frames(frames):
+        """
+        Merge list of DataFrames on Date (outer join).
+        If the same asset column appears in multiple frames
+        (e.g. gap-period + full-history dividends for workbook assets),
+        sum them per date so no events are lost.
+        """
+        import pandas as pd
         wide = frames[0]
         for f in frames[1:]:
             wide = wide.merge(f, on="Date", how="outer")
-        return wide.sort_values("Date").reset_index(drop=True)
+        wide = wide.sort_values("Date").reset_index(drop=True)
+        # Collapse _x / _y duplicate columns by summing
+        suffixed = [c for c in wide.columns if c.endswith("_x") or c.endswith("_y")]
+        base_cols = set(c[:-2] for c in suffixed)
+        for base in base_cols:
+            x_col = f"{base}_x"
+            y_col = f"{base}_y"
+            if x_col in wide.columns and y_col in wide.columns:
+                wide[base] = wide[x_col].fillna(0.0) + wide[y_col].fillna(0.0)
+                wide = wide.drop(columns=[x_col, y_col])
+        return wide
 
     adj_wide  = merge_frames(adj_frames)
     raw_wide  = merge_frames(raw_frames)
@@ -1669,7 +1686,7 @@ init();
 
 def main():
     print("BUILD: A1V12 Yahoo Production v3.4")
-    print("Script compiled: 2026-07-12 00:58 UTC")
+    print("Script compiled: 2026-07-12 01:15 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
