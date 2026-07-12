@@ -1,5 +1,5 @@
 Asset,Status,Distribution_Count,Total_DPS,Detail
-AVUV,PASS,58,29.94511984986408,Events found
+AVUV,PASS,31,21.362504097023507,Events found
 FBTC,PASS,40,22.872869169438566,Events found
 FIKQX,PASS,99,2.045,Events found
 FIWDX,PASS,107,4.056,Events found
@@ -7,9 +7,9 @@ IMCB,PASS,62,11.018,Events found
 JBND,PASS,201,29.92912777157441,Events found
 JPIE,PASS,142,29.657066938342624,Events found
 PIMIX,PASS,196,10.821,Events found
-TACTICAL,PASS,61,68450.22374196778,Events found
-VEU,PASS,57,24.029,Events found
-VOO,PASS,61,74.176,Events found
+TACTICAL,WARN,0,0.0,No distributions; verify expected
+VEU,WARN,0,0.0,No distributions; verify expected
+VOO,WARN,0,0.0,No distributions; verify expected
 XLF,PASS,62,7.659066,Events found
 XLG,PASS,60,4.8712,Events found
 XLV,PASS,63,23.923000000000002,Events found
