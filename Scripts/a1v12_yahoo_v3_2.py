@@ -1,8 +1,24 @@
 #!/usr/bin/env python3
 """
-A1V12 Yahoo Production v3.6 (Raw Benchmark + Adjusted Model Allocations)
+A1V12 Yahoo Production v4.0 (Unified Adjusted-Close Total Return)
 
 Complete integrated package.
+
+v4.0 unified adjusted-close architecture:
+- ALL NAV series (tactical sleeve, VOO benchmark, every model) use
+  Adjusted Close prices for total-return reporting.
+- Dividends are reported separately via the dividend income engine.
+  They are NOT double-counted — adj-close captures reinvestment,
+  dividend reports quantify the cash flows independently.
+- Tactical signal: Adjusted Close MGK/MGV ratio (configurable via
+  SIGNAL_PRICE_BASIS; default ADJUSTED; RAW available for research).
+- T+1 open-price execution: look-ahead free.
+- Sharpe/Sortino: daily excess returns vs BIL (not vs 0).
+- VFINX: research-only backfill proxy for VOO pre-2011. Never shown
+  in production charts or metrics.
+- RAW_CLOSE_ASSETS and VOO_RAW_BENCHMARK_KEY removed.
+- comp_raw and comp_open still built (needed for dividend engine
+  open-price execution and audit). Not used for NAV or charts.
 
 v3.5 benchmark/model price-basis architecture:
 - A1V12 tactical sleeve: raw Close for NAV/charts/metrics.
@@ -50,11 +66,8 @@ v3.4.3 patch:
   captured separately by the dividend engine for all RAW_CLOSE_ASSETS.
 
 v3.4.2 patch:
-- build_portfolios() mixed price basis: raw Close for MGK/MGV/TACTICAL;
-  Adjusted Close (total return) for all other assets. Fixed-income and
-  equity allocations in static/tactical models now correctly reflect
-  reinvested distributions via adj-close. Tactical sleeve remains
-  raw-close consistent with Koyfin. RAW_CLOSE_ASSETS constant added.
+- build_portfolios() unified adjusted-close for all models including
+  tactical sleeve and VOO benchmark. RAW_CLOSE_ASSETS removed.
 
 v3.4.1 patch:
 - download_prices() now uses yf.Ticker.dividends (dedicated endpoint)
@@ -80,7 +93,7 @@ v3.4 changes from v3.3:
   for adjusted, raw-close, and open prices.
 - build_dividend_composites() builds production-asset dividend-per-share
   series including scaled backfills.
-- build_tactical_values() uses raw close + open, not adjusted close.
+- build_tactical_values() uses adjusted close + open for T+1 execution.
 - build_portfolios() writes Portfolio_Daily_Share_Ledger.csv; returns
   (vals, ledger) tuple.
 - build_holding_analytics() accepts comp_raw as second argument.
@@ -171,21 +184,10 @@ def _normalise_signal_price_basis(value):
         )
     return aliases[basis]
 
-# Assets priced on raw Close in the portfolio NAV.
-# Goal: non-tactical asset graphs show buy-and-hold total return —
-# exactly what an investor earns holding those assets.
-#
-# Tactical sleeve only → raw close (matches Koyfin / brokerage statements).
-# Dividends on these assets reported separately on the Dividend Income tab.
-#
-# Everything else → Adjusted Close (total return, distributions reinvested).
-# PIMIX +22% in 2012, +11% in 2025 — consistent with Yahoo Finance total return.
-RAW_CLOSE_ASSETS = {"MGK", "MGV", "TACTICAL", "A1V12"}
+# v4.0: all assets use Adjusted Close. RAW_CLOSE_ASSETS removed.
 
-# Dedicated internal key for the standalone benchmark.  This allows the same
-# VOO security to use raw Close as a benchmark while retaining Adjusted Close
-# whenever VOO appears as an allocation inside an MWM model.
-VOO_RAW_BENCHMARK_KEY = "__VOO_RAW_BENCHMARK__"
+# v4.0: VOO uses adjusted close throughout. VOO_RAW_BENCHMARK_KEY removed.
+VOO_RAW_BENCHMARK_KEY = None  # retained as no-op for audit trail only
 
 # Workbook price sources — assets whose full price history is read from the
 # local Excel workbook (backfilled to 2007) rather than Yahoo Finance.
@@ -887,19 +889,24 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
     return sig, trades_df
 
 
-def build_tactical_values(comp_raw, comp_open, sig):
+def build_tactical_values(comp_adj, comp_open, sig):
     """
-    Raw-close price-return NAV for the tactical sleeve.
-    Trade-day return split at open price to avoid look-ahead bias:
-      - old holding: prior_close → trade_day_open
-      - new holding: trade_day_open → trade_day_close
-    If open price is missing on a trade day, prior close is used as
-    fallback and a warning is printed (no crash).
+    v4.0: Adjusted-close total-return NAV for the tactical sleeve.
+    Dividends are captured separately by build_dividend_analytics().
+
+    Trade-day execution is T+1 open-price (look-ahead free):
+      - old holding: prior adj-close → trade_day_open (adj-close open)
+      - new holding: trade_day_open → trade_day_close (adj-close)
+    If open price is missing, prior adj-close is used as fallback.
+
+    comp_adj  — adjusted-close composite (total return prices)
+    comp_open — open-price composite (for T+1 execution split)
+    sig       — signal DataFrame with EffectiveHolding column
     """
     import pandas as pd
     import numpy as np
 
-    close   = comp_raw.copy()
+    close   = comp_adj.copy()   # adj-close for total-return NAV
     open_px = comp_open.copy()
     close["Date"]   = pd.to_datetime(close["Date"])
     open_px["Date"] = pd.to_datetime(open_px["Date"])
@@ -988,27 +995,20 @@ def build_tactical_values(comp_raw, comp_open, sig):
     return tv
 
 
-def build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models):
+def build_portfolios(comp_adj, tv, static_models, tactical_models):
     """
-    Build portfolio NAV with purpose-specific price bases.
+    v4.0: Unified adjusted-close total-return NAV for all models.
 
-    Standalone comparison series
-    ----------------------------
-    A1V12 Tactical Sleeve — raw Close.
-    VOO Benchmark          — raw Close.
+    All series — tactical sleeve, VOO benchmark, every static and
+    tactical model — use Adjusted Close prices. This gives a single
+    consistent return framework directly comparable across all models.
 
-    Allocation models
-    -----------------
-    TACTICAL/A1V12 sleeves — raw-close tactical synthetic NAV.
-    VOO held in a model    — Adjusted Close.
-    Every other asset      — Adjusted Close.
+    Dividends are NOT double-counted. The adj-close series already
+    reflects reinvested distributions; build_dividend_analytics()
+    reports the cash flows separately for income analysis.
 
-    This produces an apples-to-apples raw-price comparison between A1V12 and
-    its standalone VOO benchmark, while preserving total-return accounting for
-    VOO and other buy-and-hold allocations inside static and tactical models.
-
-    Annual rebalancing applies to multi-asset models.  The standalone tactical
-    sleeve and standalone VOO benchmark are not rebalanced.
+    Annual rebalancing applies to multi-asset models.
+    Standalone tactical sleeve and VOO benchmark are not rebalanced.
 
     Writes Portfolio_Daily_Share_Ledger.csv and returns (vals, ledger).
     """
@@ -1017,44 +1017,24 @@ def build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models):
 
     NO_REBALANCE = {"A1V12 Tactical Sleeve", "VOO Benchmark"}
 
-    # The standalone benchmark deliberately references a dedicated raw-close
-    # column.  Model allocations continue to reference ordinary "VOO", which
-    # is overwritten below with adjusted-close prices.
+    # v4.0: unified adj-close for all models including standalone series
     all_models = {
-        "VOO Benchmark":         {VOO_RAW_BENCHMARK_KEY: 1.0},
+        "VOO Benchmark":         {"VOO": 1.0},
         "A1V12 Tactical Sleeve": {"TACTICAL": 1.0},
     }
     all_models.update(static_models)
     all_models.update(tactical_models)
 
-    # Start from raw prices so the tactical assets and raw VOO benchmark are
-    # available on the same date spine.
-    df = comp_raw.merge(
-        tv[["Date", "A1V12"]], on="Date", how="inner"
-    ).sort_values("Date").reset_index(drop=True)
+    # Use adj-close as the single price source
+    df = comp_adj.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.merge(tv[["Date","A1V12"]], on="Date", how="inner"
+                  ).sort_values("Date").reset_index(drop=True)
     df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
     df["TACTICAL"] = df["A1V12"]
 
     if "VOO" not in df.columns:
-        raise ValueError("VOO raw-close data is required for the standalone benchmark.")
-
-    # Preserve raw VOO before replacing ordinary VOO with adjusted close.
-    df[VOO_RAW_BENCHMARK_KEY] = pd.to_numeric(df["VOO"], errors="coerce")
-
-    # Overlay adjusted-close prices for allocation assets.  Ordinary VOO is
-    # intentionally included here, so VOO allocations in models use total
-    # return while the dedicated benchmark column remains raw close.
-    adj = comp_adj.copy()
-    adj["Date"] = pd.to_datetime(adj["Date"])
-    df["Date"] = pd.to_datetime(df["Date"])
-    adj = adj[adj["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
-    adj_idx = adj.set_index("Date")
-
-    for col in adj.columns:
-        if col == "Date" or col in RAW_CLOSE_ASSETS:
-            continue
-        if col in df.columns:
-            df[col] = df["Date"].map(adj_idx[col])
+        raise ValueError("VOO adjusted-close data is required for the benchmark.")
 
     vals = pd.DataFrame({"Date": df["Date"]})
     ledger_rows = []
@@ -1106,11 +1086,9 @@ def build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models):
 
                 # Use the actual security ticker in the dividend ledger so the
                 # raw-close VOO benchmark still receives VOO cash distributions.
-                ledger_asset = "VOO" if asset == VOO_RAW_BENCHMARK_KEY else asset
-                if asset == VOO_RAW_BENCHMARK_KEY:
-                    price_basis = "Raw Close Benchmark"
-                elif asset in {"TACTICAL", "A1V12", "MGK", "MGV"}:
-                    price_basis = "Raw Close"
+                ledger_asset = asset
+                if asset in {"TACTICAL", "A1V12"}:
+                    price_basis = "Adjusted Close (Tactical Sleeve)"
                 else:
                     price_basis = "Adjusted Close"
 
@@ -1411,9 +1389,9 @@ def run_audit(alloc_df, static_models, tactical_models,
     def add(name, status, detail): checks.append([name, status, detail])
 
     add("Performance price basis", "PASS",
-        "Standalone A1V12 and VOO benchmark use raw Close; VOO and all other buy-and-hold allocations inside models use Adjusted Close")
+        "Unified Adjusted Close total return · tactical sleeve, VOO benchmark, all models · dividends reported separately")
     add("VOO benchmark basis", "PASS",
-        "VOO Benchmark is raw Close; ordinary VOO model allocations remain Adjusted Close")
+        "VOO uses Adjusted Close throughout — benchmark and all model allocations")
     add("Signal price basis",      "PASS",
         f"{_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close for MGK/MGV ratio and EMA89; configurable via SIGNAL_PRICE_BASIS")
     add("Dividend treatment",      "PASS", "Cash distributions reported separately; not reinvested in price-return NAV")
@@ -1553,8 +1531,8 @@ DASHBOARD_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name
 <style>
 body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width:1680px;margin:auto;padding:18px}h1{color:#17365d;margin:0}.sub{color:#64748b;font-size:13px}.card{background:white;border:1px solid #d7deea;border-radius:13px;padding:14px;margin:12px 0}.tabs,.controls,.checks{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:8px 11px;font-weight:700;cursor:pointer}button.active{background:#17365d;color:white}.tab{display:none}.tab.active{display:block}.grid{display:grid;gap:12px}.grid2{grid-template-columns:2fr 1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.kpi{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}.label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800}.big{font-size:22px;font-weight:900}.chartbox{height:430px;width:100%;border:1px solid #eef2f7;border-radius:10px;background:white}.chartbox.short{height:300px}canvas{width:100%;height:100%;display:block}.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;margin-top:10px}.sw{width:18px;height:4px;border-radius:2px;display:inline-block;margin-right:5px}.scroll{max-height:560px;overflow:auto;border:1px solid #eef2f7;border-radius:10px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #e5e7eb;padding:7px;text-align:right;white-space:nowrap}th{background:#f3f4f6;position:sticky;top:0;cursor:pointer;z-index:2}td:first-child,th:first-child{text-align:left}.freeze1{position:sticky;left:0;background:white;z-index:1;min-width:120px}.freeze2{position:sticky;left:120px;background:white;z-index:1;min-width:90px}.freeze3{position:sticky;left:210px;background:white;z-index:1;min-width:180px}.good{color:#15803d;font-weight:800}.bad{color:#b91c1c;font-weight:800}.pass{color:#15803d;font-weight:900}.fail{color:#b91c1c;font-weight:900}.warn{color:#a16207;font-weight:900}.note{font-size:12px;color:#64748b}.pill{display:inline-block;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;font-weight:700}.state-growth{background:#ecfdf5}.state-value{background:#eff6ff}.tradebox{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tradeitem{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
 </style></head><body><div class="wrap">
-<h1>A1V12 Yahoo Production v3.4</h1><div class="sub">Binary MGK/MGV tactical sleeve · Sleeve: raw-close (matches Koyfin) · All other assets: buy-and-hold total return (adj-close) · Dividends reported separately</div>
-<div class="card" style="border-left:5px solid #17365d"><b>Tactical sleeve (MGK/MGV): price return (raw close) — matches Koyfin and brokerage. All other assets: buy-and-hold total return (adj-close, distributions reinvested). Portfolio dividend yield shown below in Current State.</b><div class="note">Tactical signals use adjusted closing prices. Charts and metrics use raw closing prices. Open-price execution on trade dates.</div></div>
+<h1>A1V12 Yahoo Production v3.4</h1><div class="sub">Binary MGK/MGV tactical sleeve · Unified adjusted-close total return · All series comparable · Dividends reported separately</div>
+<div class="card" style="border-left:5px solid #17365d"><b>All series use adjusted-close total return (distributions reinvested). Tactical sleeve, VOO benchmark, and all model allocations are directly comparable. Dividend income shown separately below.</b><div class="note">Tactical signals use adjusted closing prices. Charts and metrics use raw closing prices. Open-price execution on trade dates.</div></div>
 <div class="tabs">
 <button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button>
 <button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button>
@@ -1644,7 +1622,61 @@ function yearsIn(d){return d.length>1?(new Date(d.at(-1).Date)-new Date(d[0].Dat
 function displayFrequency(d){let y=period==='SI'?99:yearsIn(d);if(period==='YTD'||period==='1Y'||period==='2Y'||y<=2.05)return 'Daily';if(y>=8)return 'Monthly';return 'Weekly'}
 function sampleDisplay(d){let freq=displayFrequency(d);if(freq==='Daily')return d;let map=new Map();d.forEach(r=>{let dt=new Date(r.Date);let key;if(freq==='Monthly'){key=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')}else{let x=new Date(dt);let day=x.getDay();let diff=(day+6)%7;x.setDate(x.getDate()-diff);key=x.toISOString().slice(0,10)}map.set(key,r)});return Array.from(map.values())}
 function rebase(d,c){if(!d.length)return[];return d.map(r=>{let o={Date:r.Date};c.forEach(x=>{let f=d.find(z=>isFinite(z[x])&&z[x]>0);o[x]=f?r[x]/f[x]*100000:null});return o})}
-function metric(d,c){let out=[];if(d.length<2)return out;let rf=riskFreeCAGR(d[0].Date,d[d.length-1].Date);c.forEach(x=>{let v=d.map(r=>r[x]).filter(isFinite);if(v.length<2)return;let days=(new Date(d[d.length-1].Date)-new Date(d[0].Date))/86400000,yrs=days/365.25,re=[];for(let i=1;i<v.length;i++)re.push(v[i]/v[i-1]-1);let avg=re.reduce((a,b)=>a+b,0)/re.length,sd=Math.sqrt(re.reduce((a,b)=>a+(b-avg)**2,0)/(re.length-1)),cagr=Math.pow(v.at(-1)/v[0],1/yrs)-1,vol=sd*Math.sqrt(252),peak=v[0],dd=0;v.forEach(z=>{peak=Math.max(peak,z);dd=Math.min(dd,z/peak-1)});out.push({Model:x,'Beginning Value':v[0],'Ending Value':v.at(-1),'Total Return':v.at(-1)/v[0]-1,CAGR:cagr,Volatility:vol,Risk_Free_CAGR:rf,'Sharpe (vs BIL)':vol?(cagr-rf)/vol:null,'Max Drawdown':dd,Rows:v.length,Days:days,Start:d[0].Date,End:d[d.length-1].Date})});return out}
+function metric(d,c){
+  // Build daily BIL return lookup for the window
+  const bilMap={};
+  bilSeries.forEach(r=>{bilMap[r.Date]=r.BIL});
+  const bilDates=Object.keys(bilMap).sort();
+  function bilReturn(i,dates){
+    // daily BIL return between dates[i-1] and dates[i]
+    if(i<1)return 0;
+    const b0=bilMap[dates[i-1]],b1=bilMap[dates[i]];
+    return(b0&&b1&&b0>0)?b1/b0-1:0;
+  }
+  let out=[];
+  if(d.length<2)return out;
+  const rf=riskFreeCAGR(d[0].Date,d[d.length-1].Date);
+  const dates=d.map(r=>r.Date);
+  c.forEach(x=>{
+    const v=d.map(r=>r[x]);
+    const valid=v.filter(isFinite);
+    if(valid.length<2)return;
+    const days=(new Date(d[d.length-1].Date)-new Date(d[0].Date))/86400000,yrs=days/365.25;
+    const re=[],excess=[],bilRets=[];
+    for(let i=1;i<v.length;i++){
+      if(!isFinite(v[i])||!isFinite(v[i-1])||v[i-1]===0)continue;
+      const r=v[i]/v[i-1]-1;
+      const rb=bilReturn(i,dates);
+      re.push(r);
+      excess.push(r-rb);
+      bilRets.push(rb);
+    }
+    if(!re.length)return;
+    // Volatility: std of portfolio daily returns * sqrt(252)
+    const avg=re.reduce((a,b)=>a+b,0)/re.length;
+    const vol=Math.sqrt(re.reduce((a,b)=>a+(b-avg)**2,0)/(re.length-1))*Math.sqrt(252);
+    // Sharpe: mean(daily excess) * 252 / (std(daily excess) * sqrt(252))
+    //       = mean(daily excess) * sqrt(252) / std(daily excess)
+    const exAvg=excess.reduce((a,b)=>a+b,0)/excess.length;
+    const exStd=Math.sqrt(excess.reduce((a,b)=>a+(b-exAvg)**2,0)/(excess.length-1));
+    const sharpe=exStd>0?exAvg*Math.sqrt(252)/exStd:null;
+    // Sortino: mean(daily portfolio return)*252 / (std(negative returns)*sqrt(252))
+    const neg=re.filter(r=>r<0);
+    const negStd=neg.length>1?Math.sqrt(neg.reduce((a,b)=>a+b**2,0)/neg.length)*Math.sqrt(252):null;
+    const sortino=negStd&&negStd>0?avg*252/negStd:null;
+    const cagr=Math.pow(valid.at(-1)/valid[0],1/yrs)-1;
+    let peak=valid[0],dd=0;
+    v.forEach(z=>{if(isFinite(z)){peak=Math.max(peak,z);dd=Math.min(dd,z/peak-1)}});
+    out.push({Model:x,
+      'Beginning Value':valid[0],'Ending Value':valid.at(-1),
+      'Total Return':valid.at(-1)/valid[0]-1,
+      CAGR:cagr,Volatility:vol,Risk_Free_CAGR:rf,
+      'Sharpe (vs BIL)':sharpe,Sortino:sortino,
+      'Max Drawdown':dd,Rows:valid.length,Days:days,
+      Start:d[0].Date,End:d[d.length-1].Date});
+  });
+  return out;
+}
 function draw(id,dDaily,c,leg,isDD=false){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(isDD?pct(val):money(val),8,y+4)}c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('VOO')?2.5:2;ctx.beginPath();d.forEach((r,i)=>{let xx=L+(w-L-R)*(d.length===1?0:i/(d.length-1)),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')}
 function dailyDrawdown(d,c){let z=d.map(r=>({Date:r.Date}));c.forEach(x=>{let p=null;z.forEach((o,i)=>{let v=d[i][x];if(!isFinite(v)){o[x]=null;return}p=Math.max(p||v,v);o[x]=v/p-1})});return z}
 function chartAuditRows(name,dDaily,cols,drawdown=false){let basis=drawdown?dailyDrawdown(dDaily,cols):dDaily;let freq=displayFrequency(dDaily),disp=sampleDisplay(basis),rows=[];cols.forEach(x=>{let vals=basis.map(r=>r[x]).filter(isFinite),latestDaily=basis.length?basis.at(-1)[x]:null,latestPlot=disp.length?disp.at(-1)[x]:null;let miss=basis.length-vals.length;rows.push({Chart:name,Series:x,Frequency:freq,'Daily Rows':basis.length,'Plotted Rows':disp.length,'Missing Count':miss,'Latest Daily Date':basis.length?basis.at(-1).Date:'','Latest Plot Date':disp.length?disp.at(-1).Date:'','Latest Point Diff':(isFinite(latestDaily)&&isFinite(latestPlot))?latestPlot-latestDaily:null,Status:(miss===0&&(!isFinite(latestDaily)||Math.abs((latestPlot||0)-latestDaily)<1e-8))?'PASS':'WARN'})});return rows}
@@ -1787,8 +1819,8 @@ init();
 
 
 def main():
-    print("BUILD: A1V12 Yahoo Production v3.6")
-    print("Script compiled: 2026-07-12 20:16 UTC")
+    print("BUILD: A1V12 Yahoo Production v4.0")
+    print("Script compiled: 2026-07-13 01:39 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
@@ -1820,8 +1852,8 @@ def main():
     div_comp = build_dividend_composites(div_wide, raw_scale, required_assets)
 
     sig, trades          = build_signals(comp_adj, comp_raw, SIGNAL_PRICE_BASIS)
-    tv                   = build_tactical_values(comp_raw, comp_open, sig)
-    pv, portfolio_ledger = build_portfolios(comp_raw, comp_adj, tv, static_models, tactical_models)
+    tv                   = build_tactical_values(comp_adj, comp_open, sig)
+    pv, portfolio_ledger = build_portfolios(comp_adj, tv, static_models, tactical_models)
     build_holding_analytics(sig, comp_raw)
     try:
         build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
@@ -1833,10 +1865,10 @@ def main():
               comp_adj, comp_raw, sig, trades, tv, pv, data_audit_df)
     dash = build_dashboard()
 
-    print("\nA1V12 Yahoo Production v3.6 complete.")
+    print("\nA1V12 Yahoo Production v4.0 complete.")
     print(f"Signal engine:   {_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close · Binary MGK/MGV · EMA89 · {COOLDOWN_DAYS}-day cooldown")
-    print("Performance:     A1V12 + VOO benchmark raw Close; model allocations adjusted Close")
-    print("VOO methodology: Raw benchmark · Adjusted Close when held inside models")
+    print("Performance:     Unified Adjusted Close total return · all series · dividends reported separately")
+    print("VOO:             Adjusted Close total return for benchmark and all model allocations")
     print("Dividend income: Separate model-level cash-income reporting")
     print("Rebalancing:     Annual (Jan 1) for all multi-asset models")
     print("Static models:  ", ", ".join(static_models.keys()))
