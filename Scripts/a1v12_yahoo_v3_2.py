@@ -1447,14 +1447,15 @@ def csv_payload(name):
 
 def _latest_prices_json():
     """
-    Return a JSON string mapping asset → latest raw close price.
+    Return a JSON string mapping asset → latest adjusted-close price.
     Used by the dashboard to compute industry-standard dividend yield:
         yield = sum(last 4 quarterly dividends) / current price
+    v4.0: uses adj-close composite (unified price basis).
     """
     import json as _json
-    p = DATA / "Composite_Prices_Raw_Close.csv"
+    p = DATA / "Composite_Prices.csv"          # adj-close (v4.0 primary)
     if not p.exists():
-        p = DATA / "Composite_Prices.csv"
+        p = DATA / "Composite_Prices_Raw_Close.csv"
     if not p.exists():
         return "{}"
     try:
@@ -1726,7 +1727,7 @@ function updateDivYield(){
   }
 
   function shortName(m){
-    if(m==='VOO Benchmark')return 'S&P 500 (Raw Close)';
+    if(m==='VOO Benchmark')return 'S&P 500';
     return m.replace('MWM ','').replace('Tactical ','').replace(' Plus','+');
   }
 
@@ -1738,7 +1739,7 @@ function updateDivYield(){
 
   // Build S&P 500 tile first
   const vooTile=`<div class=tradeitem style="border:2px solid #17365d">
-    <div class=label>S&amp;P 500 · Raw Close Benchmark</div>
+    <div class=label>S&amp;P 500</div>
     <div class=big style="font-size:20px">${vooYld?pct(vooYld):'—'}</div>
     <div class=note>Last 4 divs ÷ price</div>
   </div>`;
@@ -1820,7 +1821,7 @@ init();
 
 def main():
     print("BUILD: A1V12 Yahoo Production v4.0")
-    print("Script compiled: 2026-07-13 02:02 UTC")
+    print("Script compiled: 2026-07-13 02:11 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
