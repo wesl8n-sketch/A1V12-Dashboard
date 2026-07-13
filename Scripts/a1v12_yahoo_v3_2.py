@@ -287,8 +287,13 @@ def build_model_configs(alloc_df):
         if total:
             neww = {k: v / total for k, v in neww.items()}
         tactical[tactical_name] = neww
-        map_rows.append([model, tactical_name, replaced_weight,
-                         "MGK/XLG/VOO sleeve replaced by A1V12 tactical sleeve"])
+        # Rule describes only assets actually present in this model
+        replaced_assets = sorted(
+            a for a in weights if a in TACTICAL_REPLACEMENT_CANDIDATES
+        )
+        rule = (f"{'/'.join(replaced_assets)} replaced by A1V12 tactical sleeve"
+                if replaced_assets else "A1V12 tactical sleeve added")
+        map_rows.append([model, tactical_name, replaced_weight, rule])
 
     import pandas as pd
     pd.DataFrame(map_rows,
@@ -1872,7 +1877,7 @@ init();
 
 def main():
     print("BUILD: A1V12 Yahoo Production v4.0")
-    print("Script compiled: 2026-07-13 02:24 UTC")
+    print("Script compiled: 2026-07-13 02:32 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
