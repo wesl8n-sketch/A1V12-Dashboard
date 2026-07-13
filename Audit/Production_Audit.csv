@@ -1,6 +1,6 @@
 Check,Status,Detail
-Performance price basis,PASS,Standalone A1V12 and VOO benchmark use raw Close; VOO and all other buy-and-hold allocations inside models use Adjusted Close
-VOO benchmark basis,PASS,VOO Benchmark is raw Close; ordinary VOO model allocations remain Adjusted Close
+Performance price basis,PASS,"Unified Adjusted Close total return · tactical sleeve, VOO benchmark, all models · dividends reported separately"
+VOO benchmark basis,PASS,VOO uses Adjusted Close throughout — benchmark and all model allocations
 Signal price basis,PASS,Adjusted Close for MGK/MGV ratio and EMA89; configurable via SIGNAL_PRICE_BASIS
 Dividend treatment,PASS,Cash distributions reported separately; not reinvested in price-return NAV
 Allocation file,PASS,Config/MWM_Allocations.csv
@@ -12,8 +12,8 @@ EMA warmup,PASS,Price history from 2008-01-01; EMA89 warm by 2011-01-01; portfol
 Cooldown rule,PASS,"3 trading days after any trade (Growth<->Value, uniform)"
 Open-price execution,PASS,Trade-day return split at open price; fallback to prior close if open missing
 Allocation assets resolve to live data,PASS,All Production_Assets have OK price data
-Adjusted composite rows,PASS,12583
-Raw composite rows,PASS,12583
+Adjusted composite rows,PASS,12584
+Raw composite rows,PASS,12584
 Signal rows,PASS,4665
 Trade ledger rows,PASS,204
 Portfolio values rows,PASS,3900

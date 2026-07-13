@@ -2,7 +2,7 @@ Asset,Yahoo_Symbol,Status,First_Date,Last_Date,Rows,Notes
 AVUV,Workbook+Yahoo,OK,1993-03-02,2026-07-10,8401,Workbook history + Yahoo gap-fill to 2026-07-10
 BIL,Workbook+Yahoo,OK,2007-05-30,2026-07-10,4809,Workbook history + Yahoo gap-fill to 2026-07-10
 DFSVX,DFSVX,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 69 div events (hist:69 ded:0)
-DXY,DX-Y.NYB,OK,2008-01-02,2026-07-10,4660,Open+Raw+Adj; 0 div events (hist:0 ded:0)
+DXY,DX-Y.NYB,OK,2008-01-02,2026-07-12,4661,Open+Raw+Adj; 0 div events (hist:0 ded:0)
 EFV,EFV,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 38 div events (hist:38 ded:0)
 FBTC,FBTC,OK,2024-01-11,2026-07-10,625,Open+Raw+Adj; 0 div events (hist:0 ded:0)
 FGBPX,FGBPX,OK,2008-01-02,2026-07-10,4659,Open+Raw+Adj; 228 div events (hist:0 ded:228)
