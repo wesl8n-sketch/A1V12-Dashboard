@@ -1656,7 +1656,7 @@ let divassetmonthly=parseCSV(EMBEDDED.divassetmonthly||'');
 let fixedincomeverify=parseCSV(EMBEDDED.fixedincomeverify||'');
 let bilSeries=tactical.filter(r=>isFinite(r['BIL Buy Hold'])).map(r=>({Date:r.Date,BIL:r['BIL Buy Hold']}));
 function riskFreeCAGR(s,e){if(!bilSeries.length)return 0;let sd=new Date(s),ed=new Date(e);let ir=bilSeries.filter(r=>{let d=new Date(r.Date);return d>=sd&&d<=ed});if(ir.length<2)return 0;let y=(new Date(ir.at(-1).Date)-new Date(ir[0].Date))/86400000/365.25;if(!(y>0))return 0;let rat=ir.at(-1).BIL/ir[0].BIL;return rat>0?Math.pow(rat,1/y)-1:0}
-function money(v){return isFinite(v)?'$'+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}):''}
+function money(v){return isFinite(v)?'$'+v.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}):''}
 function pct(v){return isFinite(v)?(v*100).toFixed(2)+'%':''}
 function ratio(v){return isFinite(v)?v.toFixed(2):''}
 function num(v,d=2){return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):v||''}
