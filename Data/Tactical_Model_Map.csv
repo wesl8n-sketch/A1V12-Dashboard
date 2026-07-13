@@ -1,8 +1,8 @@
 Static_Model,Tactical_Model,Tactical_Weight,Rule
-MWM Aggressive,Tactical Aggressive,0.5543100000000001,MGK/XLG/VOO sleeve replaced by A1V12 tactical sleeve
-MWM Balanced,Tactical Balanced,0.33294999999999997,MGK/XLG/VOO sleeve replaced by A1V12 tactical sleeve
-MWM Conservative,Tactical Conservative,0.19977,MGK/XLG/VOO sleeve replaced by A1V12 tactical sleeve
-MWM Growth,Tactical Growth,0.49271999999999994,MGK/XLG/VOO sleeve replaced by A1V12 tactical sleeve
-MWM Growth Plus,Tactical Growth Plus,0.523515,MGK/XLG/VOO sleeve replaced by A1V12 tactical sleeve
-MWM Moderate,Tactical Moderate,0.4661299999999999,MGK/XLG/VOO sleeve replaced by A1V12 tactical sleeve
-MWM Ultra Aggressive,Tactical Ultra Aggressive,0.5746,MGK/XLG/VOO sleeve replaced by A1V12 tactical sleeve
+MWM Aggressive,Tactical Aggressive,0.5543100000000001,VOO/XLG replaced by A1V12 tactical sleeve
+MWM Balanced,Tactical Balanced,0.33294999999999997,VOO/XLG replaced by A1V12 tactical sleeve
+MWM Conservative,Tactical Conservative,0.19977,VOO/XLG replaced by A1V12 tactical sleeve
+MWM Growth,Tactical Growth,0.49271999999999994,VOO/XLG replaced by A1V12 tactical sleeve
+MWM Growth Plus,Tactical Growth Plus,0.523515,VOO/XLG replaced by A1V12 tactical sleeve
+MWM Moderate,Tactical Moderate,0.4661299999999999,VOO/XLG replaced by A1V12 tactical sleeve
+MWM Ultra Aggressive,Tactical Ultra Aggressive,0.5746,VOO/XLG replaced by A1V12 tactical sleeve
