@@ -1491,9 +1491,14 @@ def _dividend_history_json():
         long["Ex_Date"] = long["Date"].dt.strftime("%Y-%m-%d")
         long = long[["Asset", "Ex_Date", "Div_Per_Share"]].sort_values(
             ["Asset", "Ex_Date"])
+        # Diagnostic: log event counts for key assets
+        for _a in ["VOO", "MGK", "MGV", "BIL"]:
+            _n = long[long["Asset"] == _a].shape[0]
+            print(f"  divhistory {_a}: {_n} events")
         return _json.dumps(long.to_dict(orient="records"))
     except Exception as e:
         print(f"  WARNING: _dividend_history_json() failed: {e}")
+        import traceback; traceback.print_exc()
         return "[]"
 
 
@@ -1821,7 +1826,7 @@ init();
 
 def main():
     print("BUILD: A1V12 Yahoo Production v4.0")
-    print("Script compiled: 2026-07-13 02:11 UTC")
+    print("Script compiled: 2026-07-13 02:17 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
