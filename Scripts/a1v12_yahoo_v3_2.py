@@ -996,6 +996,18 @@ def build_tactical_values(comp_adj, comp_open, sig):
             tv["Date"] = pd.to_datetime(tv["Date"])
             tv = tv.sort_values("Date").reset_index(drop=True)
 
+    # Sanity-check last row
+    tv_numeric = [c for c in tv.columns if c not in ("Date","EffectiveHolding")]
+    if len(tv) >= 3:
+        last   = tv[tv_numeric].iloc[-1]
+        prev   = tv[tv_numeric].iloc[-2]
+        change = ((last - prev) / prev.replace(0, float("nan"))).abs()
+        if (change > 0.20).any():
+            bad = change[change > 0.20].index.tolist()
+            print(f"  WARNING: Tactical last row ({tv['Date'].iloc[-1]}) suspect "
+                  f"returns > 20% in {bad} — dropping last row.")
+            tv = tv.iloc[:-1].reset_index(drop=True)
+
     tv.to_csv(DATA / "Tactical_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return tv
 
@@ -1132,6 +1144,19 @@ def build_portfolios(comp_adj, tv, static_models, tactical_models):
             vals = pd.concat([vals, pd.DataFrame([anchor])], ignore_index=True)
             vals["Date"] = pd.to_datetime(vals["Date"]).dt.strftime("%Y-%m-%d")
             vals = vals.sort_values("Date").reset_index(drop=True)
+
+    # ── Sanity-check last row: drop if any model shows a single-day
+    # return > 20% in absolute value (bad Yahoo gap-fill data guard).
+    numeric_cols = [c for c in vals.columns if c != "Date"]
+    if len(vals) >= 3:
+        last   = vals[numeric_cols].iloc[-1]
+        prev   = vals[numeric_cols].iloc[-2]
+        change = ((last - prev) / prev.replace(0, float("nan"))).abs()
+        if (change > 0.20).any():
+            bad_cols = change[change > 0.20].index.tolist()
+            print(f"  WARNING: Last row ({vals['Date'].iloc[-1]}) has suspect "
+                  f"returns > 20% in {bad_cols} — dropping last row.")
+            vals = vals.iloc[:-1].reset_index(drop=True)
 
     vals.to_csv(
         DATA / "Portfolio_Daily_Values.csv",
@@ -1877,7 +1902,7 @@ init();
 
 def main():
     print("BUILD: A1V12 Yahoo Production v4.0")
-    print("Script compiled: 2026-07-13 02:32 UTC")
+    print("Script compiled: 2026-07-15 12:42 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
     backup = backup_existing_outputs()
     print("Backup folder:", backup)
