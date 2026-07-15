@@ -168,4 +168,3 @@ Trade_Date,Trigger_Date,From,To,New_State,Signal_Price_Basis,Rule
 2025-12-22,2025-12-19,MGV,MGK,Growth,Adjusted Close,"Next trading day after trigger (EMA89 crossover, 3-day cooldown, Adjusted Close signal)"
 2025-12-30,2025-12-29,MGK,MGV,Value,Adjusted Close,"Next trading day after trigger (EMA89 crossover, 3-day cooldown, Adjusted Close signal)"
 2026-04-16,2026-04-15,MGV,MGK,Growth,Adjusted Close,"Next trading day after trigger (EMA89 crossover, 3-day cooldown, Adjusted Close signal)"
-2026-06-10,2026-06-09,MGK,MGV,Value,Adjusted Close,"Next trading day after trigger (EMA89 crossover, 3-day cooldown, Adjusted Close signal)"
