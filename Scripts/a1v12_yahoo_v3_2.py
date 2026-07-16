@@ -165,7 +165,7 @@ COOLDOWN_DAYS = 3
 #   "ADJUSTED" — recommended production setting; measures relative total-return
 #                leadership and avoids ex-dividend distortions.
 #   "RAW"      — research setting; uses unadjusted closing prices.
-SIGNAL_PRICE_BASIS = "ADJUSTED"
+SIGNAL_PRICE_BASIS = "RAW"
 
 
 def _normalise_signal_price_basis(value):
