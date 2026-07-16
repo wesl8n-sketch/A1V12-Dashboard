@@ -1,7 +1,7 @@
 Check,Status,Detail
 Performance price basis,PASS,"Unified Adjusted Close total return · tactical sleeve, VOO benchmark, all models · dividends reported separately"
 VOO benchmark basis,PASS,VOO uses Adjusted Close throughout — benchmark and all model allocations
-Signal price basis,PASS,Adjusted Close for MGK/MGV ratio and EMA89; configurable via SIGNAL_PRICE_BASIS
+Signal price basis,PASS,Raw Close for MGK/MGV ratio and EMA89; configurable via SIGNAL_PRICE_BASIS
 Dividend treatment,PASS,Cash distributions reported separately; not reinvested in price-return NAV
 Allocation file,PASS,Config/MWM_Allocations.csv
 Allocation rows,PASS,82
@@ -14,10 +14,10 @@ Open-price execution,PASS,Trade-day return split at open price; fallback to prio
 Allocation assets resolve to live data,PASS,All Production_Assets have OK price data
 Adjusted composite rows,PASS,12587
 Raw composite rows,PASS,12587
-Signal rows,PASS,4668
-Trade ledger rows,PASS,204
+Signal rows,PASS,4669
+Trade ledger rows,PASS,193
 Portfolio values rows,PASS,3903
-Latest signal date,PASS,2026-07-15 00:00:00
+Latest signal date,PASS,2026-07-16 00:00:00
 Latest portfolio date,PASS,2026-07-15 00:00:00
 Portfolio rebalancing,PASS,Annual (first trading day of each year) for multi-asset models; continuous blend for single-asset models
 Backfill scaling,PASS,Ratio-scaled to first live observation
