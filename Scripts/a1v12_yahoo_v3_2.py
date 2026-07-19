@@ -171,6 +171,25 @@ PROXIMITY_FILTER_ENABLED = True
 PROXIMITY_THRESHOLD = 0.0030          # 0.30%
 PROXIMITY_LOOKBACK_DAYS = 3           # trading days
 
+# Breakout fallback (adopted 2026-07 after the same 4-window validation):
+#   Fixes a known failure mode of the proximity filter alone -- a fast,
+#   decisive move that gaps straight through the +/-0.30% band without
+#   ever lingering inside it gets permanently rejected and can leave the
+#   sleeve on the wrong side for months (observed: an April 2025 MGK
+#   crossover was rejected this way and the sleeve held MGV for 7 months,
+#   missing a 14pp MGK-vs-MGV move). If the proximity lookback comes back
+#   nil, the crossover is accepted anyway once the ratio has moved beyond
+#   BREAKOUT_THRESHOLD from its EMA89 on the crossover day itself -- a
+#   materially bigger, one-day magnitude test rather than a persistence
+#   test, so it doesn't get fooled by ordinary short-term autocorrelation.
+#   Validated result: beats the proximity-filter-alone version on CAGR
+#   and Sharpe in all four windows (5yr/10yr/Jan-2016/Jan-2021), with
+#   essentially unchanged max drawdown and a modest increase in switches.
+#   A narrower sweep found 0.60-0.80% catches the target case but with a
+#   smaller edge; 1.50% is too strict and never fires in this history.
+BREAKOUT_FALLBACK_ENABLED = True
+BREAKOUT_THRESHOLD = 0.0100           # 1.00%
+
 # Signal research switch.  This affects only the MGK/MGV ratio and EMA89
 # crossover calculation; it does not change the tactical NAV, benchmark,
 # model-allocation price basis, or dividend accounting.
@@ -851,8 +870,14 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
     # its prior value until a later crossover satisfies the proximity
     # condition. See PROXIMITY_FILTER_ENABLED docstring note above for
     # the backtest results that led to adopting this filter.
+    #
+    # Breakout fallback: if the proximity lookback comes back nil, accept
+    # anyway if the ratio has moved decisively (BREAKOUT_THRESHOLD) past
+    # its EMA89 in the crossover's own direction on the crossover day
+    # itself. See BREAKOUT_FALLBACK_ENABLED docstring note above.
     if PROXIMITY_FILTER_ENABLED:
-        pct_dev = (sig["MGK_MGV"] / sig["MGK_MGV_EMA89"] - 1.0).abs().values
+        pct_signed = (sig["MGK_MGV"] / sig["MGK_MGV_EMA89"] - 1.0).values
+        pct_dev = np.abs(pct_signed)
         proximity = pct_dev <= PROXIMITY_THRESHOLD
 
         crossover = np.zeros(n, dtype=bool)
@@ -864,7 +889,13 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
             shifted[lag:] = proximity[:-lag]
             prox_recent |= shifted
 
-        accepted = crossover & prox_recent
+        if BREAKOUT_FALLBACK_ENABLED:
+            decisive_up = pct_signed > BREAKOUT_THRESHOLD
+            decisive_down = pct_signed < -BREAKOUT_THRESHOLD
+            decisive = np.where(raw_signal.astype(bool), decisive_up, decisive_down)
+            accepted = crossover & (prox_recent | decisive)
+        else:
+            accepted = crossover & prox_recent
 
         filtered_signal = np.empty(n, dtype=int)
         filtered_signal[0] = raw_signal[0]
@@ -909,8 +940,12 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
                 f"({PROXIMITY_LOOKBACK_DAYS}-day lookback)"
                 if PROXIMITY_FILTER_ENABLED else ""
             )
+            breakout_clause = (
+                f" w/ {BREAKOUT_THRESHOLD*100:.2f}% breakout fallback"
+                if (PROXIMITY_FILTER_ENABLED and BREAKOUT_FALLBACK_ENABLED) else ""
+            )
             rule = (f"Next trading day after trigger (EMA89 crossover, "
-                    f"{COOLDOWN_DAYS}-day cooldown{prox_clause}, {basis_label} signal)")
+                    f"{COOLDOWN_DAYS}-day cooldown{prox_clause}{breakout_clause}, {basis_label} signal)")
             trades_list.append([
                 trade_date, trigger_date, current_holding, new_holding,
                 new_state, basis_label, rule,
@@ -2004,7 +2039,11 @@ def main():
         f" · {PROXIMITY_THRESHOLD*100:.2f}% proximity filter ({PROXIMITY_LOOKBACK_DAYS}d lookback)"
         if PROXIMITY_FILTER_ENABLED else " · proximity filter OFF"
     )
-    print(f"Signal engine:   {_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close · Binary MGK/MGV · EMA89{_prox_note} · {COOLDOWN_DAYS}-day cooldown")
+    _breakout_note = (
+        f" + {BREAKOUT_THRESHOLD*100:.2f}% breakout fallback"
+        if (PROXIMITY_FILTER_ENABLED and BREAKOUT_FALLBACK_ENABLED) else ""
+    )
+    print(f"Signal engine:   {_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close · Binary MGK/MGV · EMA89{_prox_note}{_breakout_note} · {COOLDOWN_DAYS}-day cooldown")
     print("Performance:     Unified Adjusted Close total return · all series · dividends reported separately")
     print("VOO:             Adjusted Close total return for benchmark and all model allocations")
     print("Dividend income: Separate model-level cash-income reporting")
