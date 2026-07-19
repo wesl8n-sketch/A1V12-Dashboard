@@ -157,6 +157,20 @@ ASSET_ALIASES = {
 TACTICAL_REPLACEMENT_CANDIDATES = {"MGK", "XLG", "VOO"}
 COOLDOWN_DAYS = 3
 
+# Proximity filter (adopted 2026-07 after backtest validation across
+# 5yr / 10yr / Jan-2016 / Jan-2021 windows on Raw-Close signal basis):
+#   CAGR +2.4 to +3.3pp, Sharpe improved in every window, volatility
+#   slightly lower, switches down 58-72%, and 5yr max drawdown improved
+#   from -26.9% to -17.0% (T+1-open production execution, corrected
+#   VOO adjusted-close data). A fresh EMA89 crossover is only accepted
+#   if the ratio was within PROXIMITY_THRESHOLD of its EMA89 on at
+#   least one of the prior PROXIMITY_LOOKBACK_DAYS trading days;
+#   otherwise the crossover is treated as noise and ignored until a
+#   later crossover qualifies. Applied before the existing cooldown.
+PROXIMITY_FILTER_ENABLED = True
+PROXIMITY_THRESHOLD = 0.0030          # 0.30%
+PROXIMITY_LOOKBACK_DAYS = 3           # trading days
+
 # Signal research switch.  This affects only the MGK/MGV ratio and EMA89
 # crossover calculation; it does not change the tactical NAV, benchmark,
 # model-allocation price basis, or dividend accounting.
@@ -802,6 +816,7 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
       - trades execute at T+1 open in build_tactical_values().
     """
     import pandas as pd
+    import numpy as np
 
     basis = _normalise_signal_price_basis(signal_price_basis)
     if basis == "RAW":
@@ -825,6 +840,38 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
 
     raw_signal = (sig["MGK_MGV"] > sig["MGK_MGV_EMA89"]).astype(int).values
     n = len(sig)
+
+    # ── Proximity filter ────────────────────────────────────────────────
+    # A fresh EMA89 crossover is only accepted if the ratio was within
+    # PROXIMITY_THRESHOLD of its EMA89 on at least one of the prior
+    # PROXIMITY_LOOKBACK_DAYS trading days. This screens out crossovers
+    # where price gapped straight through the EMA without genuinely
+    # approaching it first -- the kind of move that tends to whipsaw.
+    # Rejected crossovers are treated as noise: the signal simply holds
+    # its prior value until a later crossover satisfies the proximity
+    # condition. See PROXIMITY_FILTER_ENABLED docstring note above for
+    # the backtest results that led to adopting this filter.
+    if PROXIMITY_FILTER_ENABLED:
+        pct_dev = (sig["MGK_MGV"] / sig["MGK_MGV_EMA89"] - 1.0).abs().values
+        proximity = pct_dev <= PROXIMITY_THRESHOLD
+
+        crossover = np.zeros(n, dtype=bool)
+        crossover[1:] = raw_signal[1:] != raw_signal[:-1]
+
+        prox_recent = np.zeros(n, dtype=bool)
+        for lag in range(1, PROXIMITY_LOOKBACK_DAYS + 1):
+            shifted = np.zeros(n, dtype=bool)
+            shifted[lag:] = proximity[:-lag]
+            prox_recent |= shifted
+
+        accepted = crossover & prox_recent
+
+        filtered_signal = np.empty(n, dtype=int)
+        filtered_signal[0] = raw_signal[0]
+        for i in range(1, n):
+            filtered_signal[i] = raw_signal[i] if accepted[i] else filtered_signal[i - 1]
+        raw_signal = filtered_signal
+
     decision_position = [0] * n
     decision_position[0] = raw_signal[0]
     days_since = COOLDOWN_DAYS
@@ -857,8 +904,13 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
         if effective_position[i] != effective_position[i - 1]:
             trigger_date = sig["Date"].iloc[i - 1]
             trade_date = sig["Date"].iloc[i]
+            prox_clause = (
+                f", {PROXIMITY_THRESHOLD*100:.2f}% proximity filter "
+                f"({PROXIMITY_LOOKBACK_DAYS}-day lookback)"
+                if PROXIMITY_FILTER_ENABLED else ""
+            )
             rule = (f"Next trading day after trigger (EMA89 crossover, "
-                    f"{COOLDOWN_DAYS}-day cooldown, {basis_label} signal)")
+                    f"{COOLDOWN_DAYS}-day cooldown{prox_clause}, {basis_label} signal)")
             trades_list.append([
                 trade_date, trigger_date, current_holding, new_holding,
                 new_state, basis_label, rule,
@@ -1948,7 +2000,11 @@ def main():
     dash = build_dashboard()
 
     print("\nA1V12 Yahoo Production v4.0 complete.")
-    print(f"Signal engine:   {_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close · Binary MGK/MGV · EMA89 · {COOLDOWN_DAYS}-day cooldown")
+    _prox_note = (
+        f" · {PROXIMITY_THRESHOLD*100:.2f}% proximity filter ({PROXIMITY_LOOKBACK_DAYS}d lookback)"
+        if PROXIMITY_FILTER_ENABLED else " · proximity filter OFF"
+    )
+    print(f"Signal engine:   {_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close · Binary MGK/MGV · EMA89{_prox_note} · {COOLDOWN_DAYS}-day cooldown")
     print("Performance:     Unified Adjusted Close total return · all series · dividends reported separately")
     print("VOO:             Adjusted Close total return for benchmark and all model allocations")
     print("Dividend income: Separate model-level cash-income reporting")
