@@ -12,8 +12,8 @@ EMA warmup,PASS,Price history from 2008-01-01; EMA89 warm by 2011-01-01; portfol
 Cooldown rule,PASS,"3 trading days after any trade (Growth<->Value, uniform)"
 Open-price execution,PASS,Trade-day return split at open price; fallback to prior close if open missing
 Allocation assets resolve to live data,PASS,All Production_Assets have OK price data
-Adjusted composite rows,PASS,8417
-Raw composite rows,PASS,12588
+Adjusted composite rows,PASS,12581
+Raw composite rows,PASS,12581
 Signal rows,PASS,4670
 Trade ledger rows,PASS,193
 Portfolio values rows,PASS,3905
