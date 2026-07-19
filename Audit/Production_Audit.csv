@@ -15,7 +15,7 @@ Allocation assets resolve to live data,PASS,All Production_Assets have OK price 
 Adjusted composite rows,PASS,12581
 Raw composite rows,PASS,12581
 Signal rows,PASS,4670
-Trade ledger rows,PASS,117
+Trade ledger rows,PASS,123
 Portfolio values rows,PASS,3905
 Latest signal date,PASS,2026-07-17 00:00:00
 Latest portfolio date,PASS,2026-07-17 00:00:00
