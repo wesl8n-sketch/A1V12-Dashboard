@@ -1014,13 +1014,15 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
                 f" w/ {BREAKOUT_THRESHOLD*100:.2f}% breakout fallback"
                 if (PROXIMITY_FILTER_ENABLED and BREAKOUT_FALLBACK_ENABLED) else ""
             )
-            confirm_clause = (
-                f" + {CONFIRMATION_LAYER_DAYS}-day confirmation"
-                if (PROXIMITY_FILTER_ENABLED and CONFIRMATION_LAYER_ENABLED) else ""
-            )
-            lag_label = {1: "Next", 2: "2nd", 3: "3rd"}.get(EXECUTION_LAG_DAYS, f"{EXECUTION_LAG_DAYS}th")
-            rule = (f"{lag_label} trading day after trigger (EMA89 crossover, "
-                    f"{COOLDOWN_DAYS}-day cooldown{prox_clause}{breakout_clause}{confirm_clause}, {basis_label} signal)")
+            if _confirm_offset:
+                _exec_desc = "next day" if EXECUTION_LAG_DAYS == 1 else f"{EXECUTION_LAG_DAYS} trading days later"
+                timing_desc = (f"Trigger + {_confirm_offset}-day confirmation, "
+                                f"execution {_exec_desc}")
+            else:
+                lag_label = {1: "Next", 2: "2nd", 3: "3rd"}.get(EXECUTION_LAG_DAYS, f"{EXECUTION_LAG_DAYS}th")
+                timing_desc = f"{lag_label} trading day after trigger"
+            rule = (f"{timing_desc} (EMA89 crossover, "
+                    f"{COOLDOWN_DAYS}-day cooldown{prox_clause}{breakout_clause}, {basis_label} signal)")
             trades_list.append([
                 trade_date, trigger_date, current_holding, new_holding,
                 new_state, basis_label, rule,
