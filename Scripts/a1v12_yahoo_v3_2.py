@@ -955,7 +955,7 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
         new_holding = "MGK" if effective_position[i] == 1 else "MGV"
         new_state = "Growth" if new_holding == "MGK" else "Value"
         if effective_position[i] != effective_position[i - 1]:
-            trigger_date = sig["Date"].iloc[i - 1]
+            trigger_date = sig["Date"].iloc[max(i - EXECUTION_LAG_DAYS, 0)]
             trade_date = sig["Date"].iloc[i]
             prox_clause = (
                 f", {PROXIMITY_THRESHOLD*100:.2f}% proximity filter "
@@ -966,7 +966,8 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
                 f" w/ {BREAKOUT_THRESHOLD*100:.2f}% breakout fallback"
                 if (PROXIMITY_FILTER_ENABLED and BREAKOUT_FALLBACK_ENABLED) else ""
             )
-            rule = (f"Next trading day after trigger (EMA89 crossover, "
+            lag_label = {1: "Next", 2: "2nd", 3: "3rd"}.get(EXECUTION_LAG_DAYS, f"{EXECUTION_LAG_DAYS}th")
+            rule = (f"{lag_label} trading day after trigger (EMA89 crossover, "
                     f"{COOLDOWN_DAYS}-day cooldown{prox_clause}{breakout_clause}, {basis_label} signal)")
             trades_list.append([
                 trade_date, trigger_date, current_holding, new_holding,
