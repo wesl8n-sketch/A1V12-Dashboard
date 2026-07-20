@@ -158,21 +158,21 @@ TACTICAL_REPLACEMENT_CANDIDATES = {"MGK", "XLG", "VOO"}
 
 # Execution timing (amended 2026-07 after backtest validation across
 # 5yr / 10yr / Jan-2016 / Jan-2021 windows, band logic held constant):
-#   T+2 execution with a 2-day cooldown beats the prior T+1/3-day setup
-#   in every window on CAGR and Sharpe (+0.9 to +1.1pp CAGR, Sharpe up
-#   in every window), with equal-or-better max drawdown, for a modest
-#   increase in switches (2-6 more per window in the two longer windows,
-#   unchanged in the two shorter ones). Intuition: waiting one extra day
-#   to execute effectively gets a free look at whether a move is holding
-#   up (similar in spirit to a confirmation rule, but applied at the
-#   execution layer rather than the signal-acceptance layer, so it
-#   doesn't amplify whipsaws the way a raw-signal confirmation fallback
-#   did in testing). The shorter 2-day cooldown also means a wrong
-#   position isn't held as long once the underlying filtered signal has
-#   already reversed -- directly addresses the multi-day cooldown-lock
-#   behavior observed live around the 2026-07-15 whipsaw.
-EXECUTION_LAG_DAYS = 2                # T+2 (was T+1)
-COOLDOWN_DAYS = 2                     # was 3
+#   Intended sequencing: trigger day (EMA89 crossover accepted by the
+#   proximity/breakout bands) -> +1 trading day = confirmation (signal
+#   must still agree; see CONFIRMATION_LAYER_ENABLED below) -> +1 more
+#   trading day = trade execution. That's trigger+2 trading days total.
+#   Since the confirmation layer already consumes the first of those two
+#   days, EXECUTION_LAG_DAYS only needs to add ONE further day after the
+#   decision commits, not two -- EXECUTION_LAG_DAYS=2 would put the trade
+#   at trigger+3, which was tested but is not the intended design.
+#   COOLDOWN_DAYS=2 was set alongside this but is currently non-binding
+#   given the confirmation layer already enforces a >=2-day minimum
+#   gap between decisions on its own (see COOLDOWN_DAYS docstring below
+#   for the empirical check); left in as a defensive floor.
+EXECUTION_LAG_DAYS = 1                 # trigger+2 total (confirmation +1, then execution +1)
+COOLDOWN_DAYS = 2                      # currently non-binding; see note above
+
 
 # Proximity filter (adopted 2026-07 after backtest validation across
 # 5yr / 10yr / Jan-2016 / Jan-2021 windows on Raw-Close signal basis):
@@ -1002,7 +1002,8 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
         new_holding = "MGK" if effective_position[i] == 1 else "MGV"
         new_state = "Growth" if new_holding == "MGK" else "Value"
         if effective_position[i] != effective_position[i - 1]:
-            trigger_date = sig["Date"].iloc[max(i - EXECUTION_LAG_DAYS, 0)]
+            _confirm_offset = CONFIRMATION_LAYER_DAYS if (PROXIMITY_FILTER_ENABLED and CONFIRMATION_LAYER_ENABLED) else 0
+            trigger_date = sig["Date"].iloc[max(i - EXECUTION_LAG_DAYS - _confirm_offset, 0)]
             trade_date = sig["Date"].iloc[i]
             prox_clause = (
                 f", {PROXIMITY_THRESHOLD*100:.2f}% proximity filter "
