@@ -1021,8 +1021,8 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
             else:
                 lag_label = {1: "Next", 2: "2nd", 3: "3rd"}.get(EXECUTION_LAG_DAYS, f"{EXECUTION_LAG_DAYS}th")
                 timing_desc = f"{lag_label} trading day after trigger"
-            rule = (f"{timing_desc} (EMA89 crossover, "
-                    f"{COOLDOWN_DAYS}-day cooldown{prox_clause}{breakout_clause}, {basis_label} signal)")
+            rule = (f"{timing_desc} (EMA89 crossover"
+                    f"{prox_clause}{breakout_clause}, {basis_label} signal)")
             trades_list.append([
                 trade_date, trigger_date, current_holding, new_holding,
                 new_state, basis_label, rule,
@@ -2124,7 +2124,7 @@ def main():
         f" + {CONFIRMATION_LAYER_DAYS}-day confirmation"
         if (PROXIMITY_FILTER_ENABLED and CONFIRMATION_LAYER_ENABLED) else ""
     )
-    print(f"Signal engine:   {_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close · Binary MGK/MGV · EMA89{_prox_note}{_breakout_note}{_confirm_note} · {COOLDOWN_DAYS}-day cooldown · T+{EXECUTION_LAG_DAYS} execution")
+    print(f"Signal engine:   {_normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()} Close · Binary MGK/MGV · EMA89{_prox_note}{_breakout_note}{_confirm_note} · T+{EXECUTION_LAG_DAYS} execution")
     print("Performance:     Unified Adjusted Close total return · all series · dividends reported separately")
     print("VOO:             Adjusted Close total return for benchmark and all model allocations")
     print("Dividend income: Separate model-level cash-income reporting")
