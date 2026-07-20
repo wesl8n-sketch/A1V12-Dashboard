@@ -1058,6 +1058,69 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
     return sig, trades_df
 
 
+def build_adjusted_open(comp_raw, comp_adj, comp_open):
+    """
+    Builds an adjusted (total-return-consistent) open-price composite,
+    fixing a real bug identified in the 2026-07 research/production
+    reconciliation: build_tactical_values() executes trade-day share
+    conversions using the RAW open price while the rest of the NAV chain
+    (prior/subsequent valuation) is entirely adjusted-close-based. That
+    mismatch created value discontinuities on every switch day, sized by
+    however much the raw/adjusted gap had grown for that asset by that
+    date -- confirmed by replicating the exact mechanic on independently
+    sourced data and reproducing the production/research CAGR gap almost
+    exactly. This function closes that gap by scaling each day's raw open
+    by that same day's own close/adjusted-close ratio:
+
+        adj_open(t) = raw_open(t) * adj_close(t) / raw_close(t)
+
+    This is the standard approximation for reconstructing an intraday
+    adjusted price when only a daily adjustment factor is known -- it
+    assumes the factor is constant intraday, which is true except on the
+    rare day an ex-dividend date falls between that day's open and close.
+    build_tactical_values()'s own docstring already described trade-day
+    execution as using "adj-close open" -- this function is what actually
+    makes that true, rather than the raw open that was silently used
+    before.
+
+    comp_raw  — raw-close composite (for the day's own adjustment factor)
+    comp_adj  — adjusted-close composite (for the day's own adjustment factor)
+    comp_open — raw open-price composite (to be adjusted)
+    """
+    import pandas as pd
+    import numpy as np
+
+    raw = comp_raw.copy()
+    adj = comp_adj.copy()
+    opn = comp_open.copy()
+    raw["Date"] = pd.to_datetime(raw["Date"])
+    adj["Date"] = pd.to_datetime(adj["Date"])
+    opn["Date"] = pd.to_datetime(opn["Date"])
+
+    tickers = [c for c in opn.columns
+               if c != "Date" and c in raw.columns and c in adj.columns]
+
+    merged = opn[["Date"] + tickers].merge(
+        raw[["Date"] + tickers], on="Date", how="left", suffixes=("", "_raw")
+    ).merge(
+        adj[["Date"] + tickers], on="Date", how="left", suffixes=("", "_adj")
+    )
+
+    out = pd.DataFrame({"Date": merged["Date"]})
+    for t in tickers:
+        raw_close = merged[f"{t}_raw"]
+        adj_close = merged[f"{t}_adj"]
+        raw_open  = merged[t]
+        factor = np.where(
+            (raw_close.notna()) & (raw_close > 0) & adj_close.notna(),
+            adj_close / raw_close,
+            1.0,
+        )
+        out[t] = raw_open * factor
+
+    return out
+
+
 def build_tactical_values(comp_adj, comp_open, sig):
     """
     v4.0: Adjusted-close total-return NAV for the tactical sleeve.
@@ -1069,7 +1132,12 @@ def build_tactical_values(comp_adj, comp_open, sig):
     If open price is missing, prior adj-close is used as fallback.
 
     comp_adj  — adjusted-close composite (total return prices)
-    comp_open — open-price composite (for T+2 execution split)
+    comp_open — open-price composite (for T+2 execution split). Must be an
+                ADJUSTED open series (see build_adjusted_open()) so trade-day
+                execution stays consistent with the adjusted-close NAV used
+                everywhere else in this function -- passing the raw open
+                composite here reproduces the 2026-07 raw/adjusted mixing
+                bug and will silently distort every switch-day valuation.
     sig       — signal DataFrame with EffectiveHolding column
     """
     import pandas as pd
@@ -1767,7 +1835,17 @@ def build_dashboard():
         "divhistory":        _dividend_history_json(),
         "assetprices":       _latest_prices_json(),
     }
+    _signal_basis_label = _normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()
+    _disclosure_note = (
+        f"Tactical signals use {_signal_basis_label} closing prices "
+        f"(see SIGNAL_PRICE_BASIS). Charts and metrics use adjusted closing "
+        f"prices, matching the total-return NAV above. Trade-day execution "
+        f"uses an adjusted open price (see build_adjusted_open()), kept "
+        f"consistent with the adjusted-close NAV rather than mixing in a "
+        f"raw open price."
+    )
     html = DASHBOARD_HTML.replace("__PAYLOAD__", json.dumps(payload))
+    html = html.replace("__SIGNAL_DISCLOSURE_NOTE__", _disclosure_note)
     out  = DASH / "A1V12_Yahoo_Production_v3_2_Dashboard.html"
     out.write_text(html)
     return out
@@ -1778,7 +1856,7 @@ DASHBOARD_HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name
 body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width:1680px;margin:auto;padding:18px}h1{color:#17365d;margin:0}.sub{color:#64748b;font-size:13px}.card{background:white;border:1px solid #d7deea;border-radius:13px;padding:14px;margin:12px 0}.tabs,.controls,.checks{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}button{border:1px solid #cbd5e1;background:white;border-radius:9px;padding:8px 11px;font-weight:700;cursor:pointer}button.active{background:#17365d;color:white}.tab{display:none}.tab.active{display:block}.grid{display:grid;gap:12px}.grid2{grid-template-columns:2fr 1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.kpi{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}.label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:800}.big{font-size:22px;font-weight:900}.chartbox{height:430px;width:100%;border:1px solid #eef2f7;border-radius:10px;background:white}.chartbox.short{height:300px}canvas{width:100%;height:100%;display:block}.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;margin-top:10px}.sw{width:18px;height:4px;border-radius:2px;display:inline-block;margin-right:5px}.scroll{max-height:560px;overflow:auto;border:1px solid #eef2f7;border-radius:10px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border-bottom:1px solid #e5e7eb;padding:7px;text-align:right;white-space:nowrap}th{background:#f3f4f6;position:sticky;top:0;cursor:pointer;z-index:2}td:first-child,th:first-child{text-align:left}.freeze1{position:sticky;left:0;background:white;z-index:1;min-width:120px}.freeze2{position:sticky;left:120px;background:white;z-index:1;min-width:90px}.freeze3{position:sticky;left:210px;background:white;z-index:1;min-width:180px}.good{color:#15803d;font-weight:800}.bad{color:#b91c1c;font-weight:800}.pass{color:#15803d;font-weight:900}.fail{color:#b91c1c;font-weight:900}.warn{color:#a16207;font-weight:900}.note{font-size:12px;color:#64748b}.pill{display:inline-block;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 8px;margin:2px;font-size:12px;font-weight:700}.state-growth{background:#ecfdf5}.state-value{background:#eff6ff}.tradebox{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tradeitem{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
 </style></head><body><div class="wrap">
 <h1>A1V12 Yahoo Production v3.4</h1><div class="sub">Binary MGK/MGV tactical sleeve · Unified adjusted-close total return · All series comparable · Dividends reported separately</div>
-<div class="card" style="border-left:5px solid #17365d"><b>All series use adjusted-close total return (distributions reinvested). Tactical sleeve, VOO benchmark, and all model allocations are directly comparable. Dividend income shown separately below.</b><div class="note">Tactical signals use adjusted closing prices. Charts and metrics use raw closing prices. Open-price execution on trade dates.</div></div>
+<div class="card" style="border-left:5px solid #17365d"><b>All series use adjusted-close total return (distributions reinvested). Tactical sleeve, VOO benchmark, and all model allocations are directly comparable. Dividend income shown separately below.</b><div class="note">__SIGNAL_DISCLOSURE_NOTE__</div></div>
 <div class="tabs">
 <button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button>
 <button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button>
@@ -2095,10 +2173,19 @@ def main():
         audit_name="Backfill_Open_Scale_Audit.csv",
         price_basis="Open")
 
+    # Adjusted-open series for tactical execution (fixes the 2026-07
+    # raw/adjusted mixing bug in build_tactical_values() -- see that
+    # function's docstring and build_adjusted_open()'s docstring for
+    # the full writeup). comp_open itself stays raw and is passed
+    # unchanged to build_dividend_analytics(), which legitimately needs
+    # raw prices for actual cash-flow reporting -- this fix is scoped
+    # to tactical NAV execution only.
+    comp_open_adj = build_adjusted_open(comp_raw, comp_adj, comp_open)
+
     div_comp = build_dividend_composites(div_wide, raw_scale, required_assets)
 
     sig, trades          = build_signals(comp_adj, comp_raw, SIGNAL_PRICE_BASIS)
-    tv                   = build_tactical_values(comp_adj, comp_open, sig)
+    tv                   = build_tactical_values(comp_adj, comp_open_adj, sig)
     pv, portfolio_ledger = build_portfolios(comp_adj, tv, static_models, tactical_models)
     build_holding_analytics(sig, comp_raw)
     try:
