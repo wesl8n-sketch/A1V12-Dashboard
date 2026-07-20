@@ -12,7 +12,7 @@ v4.0 unified adjusted-close architecture:
   dividend reports quantify the cash flows independently.
 - Tactical signal: Adjusted Close MGK/MGV ratio (configurable via
   SIGNAL_PRICE_BASIS; default ADJUSTED; RAW available for research).
-- T+1 open-price execution: look-ahead free.
+- T+2 open-price execution: look-ahead free (amended 2026-07, was T+1).
 - Sharpe/Sortino: daily excess returns vs BIL (not vs 0).
 - VFINX: research-only backfill proxy for VOO pre-2011. Never shown
   in production charts or metrics.
@@ -93,7 +93,7 @@ v3.4 changes from v3.3:
   for adjusted, raw-close, and open prices.
 - build_dividend_composites() builds production-asset dividend-per-share
   series including scaled backfills.
-- build_tactical_values() uses adjusted close + open for T+1 execution.
+- build_tactical_values() uses adjusted close + open for T+2 execution.
 - build_portfolios() writes Portfolio_Daily_Share_Ledger.csv; returns
   (vals, ledger) tuple.
 - build_holding_analytics() accepts comp_raw as second argument.
@@ -155,7 +155,24 @@ ASSET_ALIASES = {
 }
 
 TACTICAL_REPLACEMENT_CANDIDATES = {"MGK", "XLG", "VOO"}
-COOLDOWN_DAYS = 3
+
+# Execution timing (amended 2026-07 after backtest validation across
+# 5yr / 10yr / Jan-2016 / Jan-2021 windows, band logic held constant):
+#   T+2 execution with a 2-day cooldown beats the prior T+1/3-day setup
+#   in every window on CAGR and Sharpe (+0.9 to +1.1pp CAGR, Sharpe up
+#   in every window), with equal-or-better max drawdown, for a modest
+#   increase in switches (2-6 more per window in the two longer windows,
+#   unchanged in the two shorter ones). Intuition: waiting one extra day
+#   to execute effectively gets a free look at whether a move is holding
+#   up (similar in spirit to a confirmation rule, but applied at the
+#   execution layer rather than the signal-acceptance layer, so it
+#   doesn't amplify whipsaws the way a raw-signal confirmation fallback
+#   did in testing). The shorter 2-day cooldown also means a wrong
+#   position isn't held as long once the underlying filtered signal has
+#   already reversed -- directly addresses the multi-day cooldown-lock
+#   behavior observed live around the 2026-07-15 whipsaw.
+EXECUTION_LAG_DAYS = 2                # T+2 (was T+1)
+COOLDOWN_DAYS = 2                     # was 3
 
 # Proximity filter (adopted 2026-07 after backtest validation across
 # 5yr / 10yr / Jan-2016 / Jan-2021 windows on Raw-Close signal basis):
@@ -831,8 +848,8 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
 
     Execution is strictly look-ahead free:
       - decision_position[i] is determined after day i closes;
-      - effective_position[i+1] applies that decision at the next open;
-      - trades execute at T+1 open in build_tactical_values().
+      - effective_position[i+EXECUTION_LAG_DAYS] applies that decision;
+      - trades execute at T+2 open in build_tactical_values() (was T+1).
     """
     import pandas as pd
     import numpy as np
@@ -916,8 +933,13 @@ def build_signals(comp_adj, comp_raw=None, signal_price_basis=SIGNAL_PRICE_BASIS
         else:
             decision_position[i] = decision_position[i - 1]
 
-    # A decision made using today's close becomes effective at tomorrow's open.
-    effective_position = [decision_position[0]] + list(decision_position[:-1])
+    # A decision made using today's close becomes effective EXECUTION_LAG_DAYS
+    # trading days later (T+2 as of the 2026-07 timing amendment; see
+    # EXECUTION_LAG_DAYS docstring note above).
+    effective_position = (
+        [decision_position[0]] * EXECUTION_LAG_DAYS
+        + decision_position[:-EXECUTION_LAG_DAYS]
+    )
 
     holdings_list = []
     trades_list = []
@@ -986,13 +1008,13 @@ def build_tactical_values(comp_adj, comp_open, sig):
     v4.0: Adjusted-close total-return NAV for the tactical sleeve.
     Dividends are captured separately by build_dividend_analytics().
 
-    Trade-day execution is T+1 open-price (look-ahead free):
+    Trade-day execution is T+2 open-price (look-ahead free, amended 2026-07, was T+1):
       - old holding: prior adj-close → trade_day_open (adj-close open)
       - new holding: trade_day_open → trade_day_close (adj-close)
     If open price is missing, prior adj-close is used as fallback.
 
     comp_adj  — adjusted-close composite (total return prices)
-    comp_open — open-price composite (for T+1 execution split)
+    comp_open — open-price composite (for T+2 execution split)
     sig       — signal DataFrame with EffectiveHolding column
     """
     import pandas as pd
