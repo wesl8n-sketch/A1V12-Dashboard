@@ -12,13 +12,13 @@ EMA warmup,PASS,Price history from 2008-01-01; EMA89 warm by 2011-01-01; portfol
 Cooldown rule,PASS,"2 trading days after any trade (Growth<->Value, uniform)"
 Open-price execution,PASS,Trade-day return split at open price; fallback to prior close if open missing
 Allocation assets resolve to live data,PASS,All Production_Assets have OK price data
-Adjusted composite rows,PASS,12585
-Raw composite rows,PASS,12585
-Signal rows,PASS,4673
+Adjusted composite rows,PASS,12586
+Raw composite rows,PASS,12586
+Signal rows,PASS,4674
 Trade ledger rows,PASS,92
-Portfolio values rows,PASS,3908
-Latest signal date,PASS,2026-07-22 00:00:00
-Latest portfolio date,PASS,2026-07-22 00:00:00
+Portfolio values rows,PASS,3909
+Latest signal date,PASS,2026-07-23 00:00:00
+Latest portfolio date,PASS,2026-07-23 00:00:00
 Portfolio rebalancing,PASS,Annual (first trading day of each year) for multi-asset models; continuous blend for single-asset models
 Backfill scaling,PASS,Ratio-scaled to first live observation
 Chart downsampling,PASS,"Daily <=2Y, Weekly >2Y, Monthly >=8Y/SI"
