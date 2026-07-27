@@ -2027,7 +2027,6 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 <div class="card" style="border-left:5px solid #17365d"><b>All series use adjusted-close total return (distributions reinvested). Tactical sleeve, VOO benchmark, and all model allocations are directly comparable. Dividend income shown separately below.</b><div class="note">__SIGNAL_DISCLOSURE_NOTE__</div></div>
 <div class="tabs">
 <button class="tabbtn active" onclick="showTab(event,'overview')">Overview</button>
-<button class="tabbtn" onclick="showTab(event,'smhoverlay')" style="border-color:#C9962C;color:#8A6A1F">SMH Overlay</button>
 <button class="tabbtn" onclick="showTab(event,'tactical')">Tactical Sleeve</button>
 <button class="tabbtn" onclick="showTab(event,'mwm')">MWM Static</button>
 <button class="tabbtn" onclick="showTab(event,'tacticalmodels')">Tactical Models</button>
@@ -2039,6 +2038,7 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 
 <button class="tabbtn" onclick="showTab(event,'allocation')">Allocation</button>
 <button class="tabbtn" onclick="showTab(event,'config')">Config</button>
+<button class="tabbtn" onclick="showTab(event,'smhoverlay')" style="border-color:#C9962C;color:#8A6A1F">SMH Overlay</button>
 </div>
 <div class="controls"><b class="note">Period</b><span id="periodButtons"></span><span id="freqPill" class="pill">Display: Daily</span><span class="pill">Metrics use daily rows</span><span class="pill">Drawdown before downsample</span></div>
 <section id="overview" class="tab active"><div class="grid kpis" id="kpiBox"></div><div class="grid grid2"><div class="card"><h2>Primary Comparison</h2><div class="controls"><button onclick="preset('core')">Core</button><button onclick="preset('static')">MWM Static</button><button onclick="preset('tacticalmodels')">Tactical Models</button><button onclick="preset('all')">All</button></div><div id="overviewChecks" class="checks"></div><div class="chartbox"><canvas id="overviewChart"></canvas></div><div id="overviewLegend" class="legend"></div></div><div class="card"><h2>Current State &amp; Latest Trade</h2><div id="stateBox"></div><div id="latestTrade"></div><div id="divYield" style="margin-top:12px"></div></div></div><div class="card"><h2>Sortable Metrics</h2><div class="scroll"><table id="metricsTable"></table></div></div></section>
@@ -2195,7 +2195,7 @@ function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily)
   for(let i=0;i<d.length;i++){let active=String(d[i][activeCol])==='True';if(active&&bandStart===null)bandStart=i;if(!active&&bandStart!==null){ctx.fillRect(xAt(bandStart),T,Math.max(xAt(i-1)-xAt(bandStart),1.5),h-T-B);bandStart=null}}
   if(bandStart!==null)ctx.fillRect(xAt(bandStart),T,Math.max(xAt(d.length-1)-xAt(bandStart),1.5),h-T-B);
   ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(money(val),8,y+4)}
-  c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('SMH')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();d.forEach((r,i)=>{let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});
+  c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('SMH')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
   let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>SMH overlay active</span>'}
 function renderSMHOverlay(){let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + SMH Overlay'];let d=cut(smhOverlay);drawOverlayChart('smhOverlayChart',d,cols3,'smhOverlayLegend','Overlay_Active');let m=metric(d,cols3);document.getElementById('smhKpiBox').innerHTML=m.map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span> | Sharpe ${isFinite(r['Sharpe (vs BIL)'])?r['Sharpe (vs BIL)'].toFixed(2):'N/A'} | Max DD <span class=bad>${pct(r['Max Drawdown'])}</span></div></div>`).join('');let merged=[...trades.map(t=>({Date:t.Trade_Date,Type:'Base regime',From:t.From,To:t.To})),...smhOverlayTrades].sort((a,b)=>(b.Date||'').localeCompare(a.Date||''));drawTable('smhOverlayTradeTable',merged.slice(0,300))}
 function dailyDrawdown(d,c){let z=d.map(r=>({Date:r.Date}));c.forEach(x=>{let p=null;z.forEach((o,i)=>{let v=d[i][x];if(!isFinite(v)){o[x]=null;return}p=Math.max(p||v,v);o[x]=v/p-1})});return z}
