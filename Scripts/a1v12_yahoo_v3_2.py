@@ -2100,7 +2100,7 @@ const assetprices=(()=>{try{return JSON.parse(EMBEDDED.assetprices||'{}')}catch(
 function trailingYield(asset){
   const px=assetprices[asset];
   if(!px||px<=0)return null;
-  const rows=divhistory.filter(r=>r.Asset===asset&&isFinite(r.Div_Per_Share)&&Number(r.Div_Per_Share)>0)
+  const rows=divhistory.filter(r=>r.Asset===asset&&Number.isFinite(r.Div_Per_Share)&&Number(r.Div_Per_Share)>0)
     .sort((a,b)=>String(b.Ex_Date).localeCompare(String(a.Ex_Date)));
   // Sum last 4 payments (covers ~1 year of quarterly distributions)
   const last4=rows.slice(0,4).reduce((s,r)=>s+Number(r.Div_Per_Share),0);
@@ -2108,22 +2108,22 @@ function trailingYield(asset){
 }
 let divassetmonthly=parseCSV(EMBEDDED.divassetmonthly||'');
 let fixedincomeverify=parseCSV(EMBEDDED.fixedincomeverify||'');
-let bilSeries=tactical.filter(r=>isFinite(r['BIL Buy Hold'])).map(r=>({Date:r.Date,BIL:r['BIL Buy Hold']}));
+let bilSeries=tactical.filter(r=>Number.isFinite(r['BIL Buy Hold'])).map(r=>({Date:r.Date,BIL:r['BIL Buy Hold']}));
 function riskFreeCAGR(s,e){if(!bilSeries.length)return 0;let sd=new Date(s),ed=new Date(e);let ir=bilSeries.filter(r=>{let d=new Date(r.Date);return d>=sd&&d<=ed});if(ir.length<2)return 0;let y=(new Date(ir.at(-1).Date)-new Date(ir[0].Date))/86400000/365.25;if(!(y>0))return 0;let rat=ir.at(-1).BIL/ir[0].BIL;return rat>0?Math.pow(rat,1/y)-1:0}
-function money(v){return isFinite(v)?'$'+v.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}):''}
-function pct(v){return isFinite(v)?(v*100).toFixed(2)+'%':''}
-function ratio(v){return isFinite(v)?v.toFixed(2):''}
-function num(v,d=2){return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):v||''}
+function money(v){return Number.isFinite(v)?'$'+v.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}):''}
+function pct(v){return Number.isFinite(v)?(v*100).toFixed(2)+'%':''}
+function ratio(v){return Number.isFinite(v)?v.toFixed(2):''}
+function num(v,d=2){return Number.isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):v||''}
 function fmt(h,v){
   if(v==null||v==='')return '';
   if(h.includes('Value')||h.includes('Price')||h.includes('Income')||h.includes('Cumulative'))return money(v);
   if(h.includes('CAGR')||h.includes('Volatility')||h.includes('Drawdown')||h.includes('Return')||h.includes('Pct')||h.includes('Weight')||h.includes('Diff')||h.includes('Yield'))return pct(v);
   if(h.includes('Sharpe')||h.includes('Ratio'))return ratio(v);
   if(h.includes('Days'))return num(v,1);
-  if(h.includes('Rows')||h.includes('Periods')||h.includes('Count'))return isFinite(v)?Math.round(v).toLocaleString():v;
-  return isFinite(v)?num(v,2):v
+  if(h.includes('Rows')||h.includes('Periods')||h.includes('Count'))return Number.isFinite(v)?Math.round(v).toLocaleString():v;
+  return Number.isFinite(v)?num(v,2):v
 }
-function cls(h,v,row){let out='';if(h=='Status')out=v=='PASS'?'pass':(v=='FAIL'?'fail':'warn');else if(isFinite(v)){if(h.includes('Drawdown')||h.includes('Worst'))out='bad';else if(h.includes('CAGR')||h.includes('Sharpe')||h.includes('Return')||h.includes('Best'))out=v>=0?'good':'bad'}if(row&&row.__current)out+=' '+(row.State=='Value'?'state-value':'state-growth');return out}
+function cls(h,v,row){let out='';if(h=='Status')out=v=='PASS'?'pass':(v=='FAIL'?'fail':'warn');else if(Number.isFinite(v)){if(h.includes('Drawdown')||h.includes('Worst'))out='bad';else if(h.includes('CAGR')||h.includes('Sharpe')||h.includes('Return')||h.includes('Best'))out=v>=0?'good':'bad'}if(row&&row.__current)out+=' '+(row.State=='Value'?'state-value':'state-growth');return out}
 function sortVal(v){if(v==null||v==='')return null;if(typeof v==='number')return v;let s=String(v);if(/^\d{4}-\d{2}-\d{2}/.test(s)){let d=Date.parse(s);if(!isNaN(d))return d}let n=parseFloat(s.replace(/[$,%]/g,''));if(!isNaN(n))return n;return s.toLowerCase()}
 function sortRows(id,h){let rows=tableData[id]||[],key=id+'|'+h,dir=sortState[key]=='asc'?'desc':'asc';sortState={};sortState[key]=dir;let sorted=[...rows].sort((a,b)=>{let av=sortVal(a[h]),bv=sortVal(b[h]);if(av==null&&bv==null)return 0;if(av==null)return 1;if(bv==null)return -1;if(av<bv)return dir=='asc'?-1:1;if(av>bv)return dir=='asc'?1:-1;return 0});drawTable(id,sorted)}
 function drawTable(id,rows,freeze=false){let e=document.getElementById(id);if(!e)return;if(!rows||!rows.length){e.innerHTML='<tr><td class=note>No data</td></tr>';return}tableData[id]=rows;let H=Object.keys(rows[0]).filter(h=>h!='__current');let sk=Object.keys(sortState).find(k=>k.startsWith(id+'|')),active=sk?sk.split('|')[1]:null,dir=sk?sortState[sk]:null;e.innerHTML='<thead><tr>'+H.map((h,i)=>`<th class="${freeze&&i<3?'freeze'+(i+1):''}" onclick="sortRows('${id}','${String(h).replace(/'/g,"\\'")}')">${h}${active==h?(dir=='asc'?' ▲':' ▼'):''}</th>`).join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+H.map((h,i)=>`<td class="${(freeze&&i<3?'freeze'+(i+1)+' ':'')+cls(h,r[h],r)}">${fmt(h,r[h])}</td>`).join('')+'</tr>').join('')+'</tbody>'}
@@ -2132,7 +2132,7 @@ function cut(d){if(!d.length)return[];let end=new Date(d[d.length-1].Date),start
 function yearsIn(d){return d.length>1?(new Date(d.at(-1).Date)-new Date(d[0].Date))/86400000/365.25:0}
 function displayFrequency(d){let y=period==='SI'?99:yearsIn(d);if(period==='YTD'||period==='1Y'||period==='2Y'||y<=2.05)return 'Daily';if(y>=8)return 'Monthly';return 'Weekly'}
 function sampleDisplay(d){let freq=displayFrequency(d);if(freq==='Daily')return d;let map=new Map();d.forEach(r=>{let dt=new Date(r.Date);let key;if(freq==='Monthly'){key=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')}else{let x=new Date(dt);let day=x.getDay();let diff=(day+6)%7;x.setDate(x.getDate()-diff);key=x.toISOString().slice(0,10)}map.set(key,r)});return Array.from(map.values())}
-function rebase(d,c){if(!d.length)return[];return d.map(r=>{let o={Date:r.Date};c.forEach(x=>{let f=d.find(z=>isFinite(z[x])&&z[x]>0);o[x]=f?r[x]/f[x]*100000:null});return o})}
+function rebase(d,c){if(!d.length)return[];return d.map(r=>{let o={Date:r.Date};c.forEach(x=>{let f=d.find(z=>Number.isFinite(z[x])&&z[x]>0);o[x]=f?r[x]/f[x]*100000:null});return o})}
 function metric(d,c){
   // Build daily BIL return lookup for the window
   const bilMap={};
@@ -2150,12 +2150,12 @@ function metric(d,c){
   const dates=d.map(r=>r.Date);
   c.forEach(x=>{
     const v=d.map(r=>r[x]);
-    const valid=v.filter(isFinite);
+    const valid=v.filter(Number.isFinite);
     if(valid.length<2)return;
     const days=(new Date(d[d.length-1].Date)-new Date(d[0].Date))/86400000,yrs=days/365.25;
     const re=[],excess=[],bilRets=[];
     for(let i=1;i<v.length;i++){
-      if(!isFinite(v[i])||!isFinite(v[i-1])||v[i-1]===0)continue;
+      if(!Number.isFinite(v[i])||!Number.isFinite(v[i-1])||v[i-1]===0)continue;
       const r=v[i]/v[i-1]-1;
       const rb=bilReturn(i,dates);
       re.push(r);
@@ -2177,7 +2177,7 @@ function metric(d,c){
     const sortino=negStd&&negStd>0?avg*252/negStd:null;
     const cagr=Math.pow(valid.at(-1)/valid[0],1/yrs)-1;
     let peak=valid[0],dd=0;
-    v.forEach(z=>{if(isFinite(z)){peak=Math.max(peak,z);dd=Math.min(dd,z/peak-1)}});
+    v.forEach(z=>{if(Number.isFinite(z)){peak=Math.max(peak,z);dd=Math.min(dd,z/peak-1)}});
     out.push({Model:x,
       'Beginning Value':valid[0],'Ending Value':valid.at(-1),
       'Total Return':valid.at(-1)/valid[0]-1,
@@ -2188,14 +2188,14 @@ function metric(d,c){
   });
   return out;
 }
-function draw(id,dDaily,c,leg,isDD=false){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(isDD?pct(val):money(val),8,y+4)}c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('VOO')?2.5:2;ctx.beginPath();d.forEach((r,i)=>{let xx=L+(w-L-R)*(d.length===1?0:i/(d.length-1)),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')}
-function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;let xAt=i=>L+(w-L-R)*(d.length===1?0:i/(d.length-1));
+function draw(id,dDaily,c,leg,isDD=false){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(Number.isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(isDD?pct(val):money(val),8,y+4)}c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('VOO')?2.5:2;ctx.beginPath();d.forEach((r,i)=>{let xx=L+(w-L-R)*(d.length===1?0:i/(d.length-1)),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')}
+function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(Number.isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;let xAt=i=>L+(w-L-R)*(d.length===1?0:i/(d.length-1));
   // gold bands behind the lines, one rect per contiguous active stretch
   ctx.fillStyle='rgba(201,150,44,0.16)';let bandStart=null;
   for(let i=0;i<d.length;i++){let active=String(d[i][activeCol])==='True';if(active&&bandStart===null)bandStart=i;if(!active&&bandStart!==null){ctx.fillRect(xAt(bandStart),T,Math.max(xAt(i-1)-xAt(bandStart),1.5),h-T-B);bandStart=null}}
   if(bandStart!==null)ctx.fillRect(xAt(bandStart),T,Math.max(xAt(d.length-1)-xAt(bandStart),1.5),h-T-B);
   ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(money(val),8,y+4)}
-  c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('SMH')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
+  c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('SMH')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!Number.isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
   let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>SMH overlay active</span>'}
 function renderSMHOverlay(){
   let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + SMH Overlay'];
@@ -2205,15 +2205,15 @@ function renderSMHOverlay(){
   }catch(e){console.error('SMH overlay chart failed:',e);}
   try{
     let m=metric(d,cols3);
-    document.getElementById('smhKpiBox').innerHTML=m.map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span> | Sharpe ${(r['Sharpe (vs BIL)']!=null&&isFinite(r['Sharpe (vs BIL)']))?r['Sharpe (vs BIL)'].toFixed(2):'N/A'} | Max DD <span class=bad>${pct(r['Max Drawdown'])}</span></div></div>`).join('');
+    document.getElementById('smhKpiBox').innerHTML=m.map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span> | Sharpe ${(r['Sharpe (vs BIL)']!=null&&Number.isFinite(r['Sharpe (vs BIL)']))?r['Sharpe (vs BIL)'].toFixed(2):'N/A'} | Max DD <span class=bad>${pct(r['Max Drawdown'])}</span></div></div>`).join('');
   }catch(e){console.error('SMH overlay KPI cards failed:',e);}
   try{
     let merged=[...trades.map(t=>({Date:t.Trade_Date,Type:'Base regime',From:t.From,To:t.To})),...smhOverlayTrades].sort((a,b)=>(b.Date||'').localeCompare(a.Date||''));
     drawTable('smhOverlayTradeTable',merged.slice(0,300));
   }catch(e){console.error('SMH overlay trade table failed:',e);let el=document.getElementById('smhOverlayTradeTable');if(el)el.innerHTML='<tr><td class=note>Trade log failed to render — check console</td></tr>';}
 }
-function dailyDrawdown(d,c){let z=d.map(r=>({Date:r.Date}));c.forEach(x=>{let p=null;z.forEach((o,i)=>{let v=d[i][x];if(!isFinite(v)){o[x]=null;return}p=Math.max(p||v,v);o[x]=v/p-1})});return z}
-function chartAuditRows(name,dDaily,cols,drawdown=false){let basis=drawdown?dailyDrawdown(dDaily,cols):dDaily;let freq=displayFrequency(dDaily),disp=sampleDisplay(basis),rows=[];cols.forEach(x=>{let vals=basis.map(r=>r[x]).filter(isFinite),latestDaily=basis.length?basis.at(-1)[x]:null,latestPlot=disp.length?disp.at(-1)[x]:null;let miss=basis.length-vals.length;rows.push({Chart:name,Series:x,Frequency:freq,'Daily Rows':basis.length,'Plotted Rows':disp.length,'Missing Count':miss,'Latest Daily Date':basis.length?basis.at(-1).Date:'','Latest Plot Date':disp.length?disp.at(-1).Date:'','Latest Point Diff':(isFinite(latestDaily)&&isFinite(latestPlot))?latestPlot-latestDaily:null,Status:(miss===0&&(!isFinite(latestDaily)||Math.abs((latestPlot||0)-latestDaily)<1e-8))?'PASS':'WARN'})});return rows}
+function dailyDrawdown(d,c){let z=d.map(r=>({Date:r.Date}));c.forEach(x=>{let p=null;z.forEach((o,i)=>{let v=d[i][x];if(!Number.isFinite(v)){o[x]=null;return}p=Math.max(p||v,v);o[x]=v/p-1})});return z}
+function chartAuditRows(name,dDaily,cols,drawdown=false){let basis=drawdown?dailyDrawdown(dDaily,cols):dDaily;let freq=displayFrequency(dDaily),disp=sampleDisplay(basis),rows=[];cols.forEach(x=>{let vals=basis.map(r=>r[x]).filter(isFinite),latestDaily=basis.length?basis.at(-1)[x]:null,latestPlot=disp.length?disp.at(-1)[x]:null;let miss=basis.length-vals.length;rows.push({Chart:name,Series:x,Frequency:freq,'Daily Rows':basis.length,'Plotted Rows':disp.length,'Missing Count':miss,'Latest Daily Date':basis.length?basis.at(-1).Date:'','Latest Plot Date':disp.length?disp.at(-1).Date:'','Latest Point Diff':(Number.isFinite(latestDaily)&&Number.isFinite(latestPlot))?latestPlot-latestDaily:null,Status:(miss===0&&(!Number.isFinite(latestDaily)||Math.abs((latestPlot||0)-latestDaily)<1e-8))?'PASS':'WARN'})});return rows}
 function staticCols(){return cols(portfolio).filter(x=>x.startsWith('MWM '))}
 function tacticalModelCols(){return cols(portfolio).filter(x=>x.startsWith('Tactical '))}
 function showTab(e,id){
@@ -2233,7 +2233,7 @@ function recentSignals(){return [...signals].reverse().slice(0,60).map((r,i)=>({
 function render(){let d=cut(portfolio),rb=rebase(d,visible),m=metric(rb,visible);document.getElementById('freqPill').innerHTML='Display: '+displayFrequency(d);draw('overviewChart',rb,visible,'overviewLegend');drawTable('metricsTable',m);document.getElementById('kpiBox').innerHTML=m.slice(0,4).map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span></div></div>`).join('');document.getElementById('windowAudit').innerHTML=d.length?`<b>${period}</b><br>Start: ${d[0].Date}<br>End: ${d.at(-1).Date}<br>Daily rows: ${d.length}<br>Display frequency: ${displayFrequency(d)}<br>Display rows: ${sampleDisplay(d).length}`:'No data';drawTable('windowRows',m);
 let tc=cols(tactical).filter(x=>['A1V12','VOO Benchmark','MGK Buy Hold','MGV Buy Hold'].includes(x));
 let td=rebase(cut(tactical),tc),tm=metric(td,tc);draw('tacticalChart',td,tc,'tacticalLegend');draw('tacticalDD',dailyDrawdown(td,tc),tc,'tacticalDDLegend',true);drawTable('tacticalMetrics',tm);let sd=rebase(cut(portfolio),staticCols());draw('mwmChart',sd,staticCols(),'mwmLegend');drawTable('mwmMetrics',metric(sd,staticCols()));let tmd=rebase(cut(portfolio),tacticalModelCols());draw('tacticalModelsChart',tmd,tacticalModelCols(),'tacticalModelsLegend');drawTable('tacticalModelsMetrics',metric(tmd,tacticalModelCols()));state();drawTable('signalTable',recentSignals(),true);let auditRows=[...chartAuditRows('Overview',rb,visible,false),...chartAuditRows('Tactical Sleeve',td,tc,false),...chartAuditRows('Tactical Drawdown',td,tc,true),...chartAuditRows('MWM Static',sd,staticCols(),false),...chartAuditRows('Tactical Models',tmd,tacticalModelCols(),false)];drawTable('chartAuditTable',auditRows);updateDivYield()}
-function state(){let s=signals.at(-1)||{},tr=trades.at(-1)||{};let stateHtml=`<div class=tradebox><div class=tradeitem><div class=label>Current State</div><div class=big>${s.State||'N/A'}</div></div><div class=tradeitem><div class=label>Current Holding</div><div class=big>${s.EffectiveHolding||'N/A'}</div></div><div class=tradeitem><div class=label>Data As Of</div><div class=big>${s.Date||'N/A'}</div></div><div class=tradeitem><div class=label>MGK/MGV Ratio</div><div class=big>${isFinite(s.MGK_MGV)?s.MGK_MGV.toFixed(4):'N/A'}</div></div><div class=tradeitem><div class=label>EMA89</div><div class=big>${isFinite(s.MGK_MGV_EMA89)?s.MGK_MGV_EMA89.toFixed(4):'N/A'}</div></div></div>`;let tradeHtml=`<div class=tradebox style="margin-top:10px"><div class=tradeitem><div class=label>Trigger Date</div><div class=big>${tr.Trigger_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Trade Date</div><div class=big>${tr.Trade_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Latest Trade</div><div class=big>${tr.From||''} → ${tr.To||''}</div></div><div class=tradeitem><div class=label>Rule</div><div class=note>${tr.Rule||'N/A'}</div></div></div>`;document.getElementById('stateBox').innerHTML=stateHtml;document.getElementById('latestTrade').innerHTML=tradeHtml;document.getElementById('latestTrade2').innerHTML=tradeHtml}
+function state(){let s=signals.at(-1)||{},tr=trades.at(-1)||{};let stateHtml=`<div class=tradebox><div class=tradeitem><div class=label>Current State</div><div class=big>${s.State||'N/A'}</div></div><div class=tradeitem><div class=label>Current Holding</div><div class=big>${s.EffectiveHolding||'N/A'}</div></div><div class=tradeitem><div class=label>Data As Of</div><div class=big>${s.Date||'N/A'}</div></div><div class=tradeitem><div class=label>MGK/MGV Ratio</div><div class=big>${Number.isFinite(s.MGK_MGV)?s.MGK_MGV.toFixed(4):'N/A'}</div></div><div class=tradeitem><div class=label>EMA89</div><div class=big>${Number.isFinite(s.MGK_MGV_EMA89)?s.MGK_MGV_EMA89.toFixed(4):'N/A'}</div></div></div>`;let tradeHtml=`<div class=tradebox style="margin-top:10px"><div class=tradeitem><div class=label>Trigger Date</div><div class=big>${tr.Trigger_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Trade Date</div><div class=big>${tr.Trade_Date||'N/A'}</div></div><div class=tradeitem><div class=label>Latest Trade</div><div class=big>${tr.From||''} → ${tr.To||''}</div></div><div class=tradeitem><div class=label>Rule</div><div class=note>${tr.Rule||'N/A'}</div></div></div>`;document.getElementById('stateBox').innerHTML=stateHtml;document.getElementById('latestTrade').innerHTML=tradeHtml;document.getElementById('latestTrade2').innerHTML=tradeHtml}
 function updateDivYield(){
   // Dividend yield display in Current State card.
   //
@@ -2255,8 +2255,8 @@ function updateDivYield(){
     // Portfolio model: TTM income / current portfolio NAV
     const sum=divsummary.find(r=>r.Model===model);
     if(!sum)return null;
-    const nav=pv&&isFinite(pv[model])?Number(pv[model]):null;
-    const ttm=isFinite(sum.TTM_Dividend_Income)?Number(sum.TTM_Dividend_Income):null;
+    const nav=pv&&Number.isFinite(pv[model])?Number(pv[model]):null;
+    const ttm=Number.isFinite(sum.TTM_Dividend_Income)?Number(sum.TTM_Dividend_Income):null;
     return nav&&ttm&&nav>0?ttm/nav:null;
   }
 
