@@ -2197,7 +2197,21 @@ function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily)
   ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(money(val),8,y+4)}
   c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('SMH')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
   let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>SMH overlay active</span>'}
-function renderSMHOverlay(){let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + SMH Overlay'];let d=cut(smhOverlay);drawOverlayChart('smhOverlayChart',d,cols3,'smhOverlayLegend','Overlay_Active');let m=metric(d,cols3);document.getElementById('smhKpiBox').innerHTML=m.map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span> | Sharpe ${isFinite(r['Sharpe (vs BIL)'])?r['Sharpe (vs BIL)'].toFixed(2):'N/A'} | Max DD <span class=bad>${pct(r['Max Drawdown'])}</span></div></div>`).join('');let merged=[...trades.map(t=>({Date:t.Trade_Date,Type:'Base regime',From:t.From,To:t.To})),...smhOverlayTrades].sort((a,b)=>(b.Date||'').localeCompare(a.Date||''));drawTable('smhOverlayTradeTable',merged.slice(0,300))}
+function renderSMHOverlay(){
+  let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + SMH Overlay'];
+  let d=cut(smhOverlay);
+  try{
+    drawOverlayChart('smhOverlayChart',d,cols3,'smhOverlayLegend','Overlay_Active');
+  }catch(e){console.error('SMH overlay chart failed:',e);}
+  try{
+    let m=metric(d,cols3);
+    document.getElementById('smhKpiBox').innerHTML=m.map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span> | Sharpe ${(r['Sharpe (vs BIL)']!=null&&isFinite(r['Sharpe (vs BIL)']))?r['Sharpe (vs BIL)'].toFixed(2):'N/A'} | Max DD <span class=bad>${pct(r['Max Drawdown'])}</span></div></div>`).join('');
+  }catch(e){console.error('SMH overlay KPI cards failed:',e);}
+  try{
+    let merged=[...trades.map(t=>({Date:t.Trade_Date,Type:'Base regime',From:t.From,To:t.To})),...smhOverlayTrades].sort((a,b)=>(b.Date||'').localeCompare(a.Date||''));
+    drawTable('smhOverlayTradeTable',merged.slice(0,300));
+  }catch(e){console.error('SMH overlay trade table failed:',e);let el=document.getElementById('smhOverlayTradeTable');if(el)el.innerHTML='<tr><td class=note>Trade log failed to render — check console</td></tr>';}
+}
 function dailyDrawdown(d,c){let z=d.map(r=>({Date:r.Date}));c.forEach(x=>{let p=null;z.forEach((o,i)=>{let v=d[i][x];if(!isFinite(v)){o[x]=null;return}p=Math.max(p||v,v);o[x]=v/p-1})});return z}
 function chartAuditRows(name,dDaily,cols,drawdown=false){let basis=drawdown?dailyDrawdown(dDaily,cols):dDaily;let freq=displayFrequency(dDaily),disp=sampleDisplay(basis),rows=[];cols.forEach(x=>{let vals=basis.map(r=>r[x]).filter(isFinite),latestDaily=basis.length?basis.at(-1)[x]:null,latestPlot=disp.length?disp.at(-1)[x]:null;let miss=basis.length-vals.length;rows.push({Chart:name,Series:x,Frequency:freq,'Daily Rows':basis.length,'Plotted Rows':disp.length,'Missing Count':miss,'Latest Daily Date':basis.length?basis.at(-1).Date:'','Latest Plot Date':disp.length?disp.at(-1).Date:'','Latest Point Diff':(isFinite(latestDaily)&&isFinite(latestPlot))?latestPlot-latestDaily:null,Status:(miss===0&&(!isFinite(latestDaily)||Math.abs((latestPlot||0)-latestDaily)<1e-8))?'PASS':'WARN'})});return rows}
 function staticCols(){return cols(portfolio).filter(x=>x.startsWith('MWM '))}
