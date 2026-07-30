@@ -2124,7 +2124,7 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
   <div class="grid kpis" id="alphaKpiBox" style="margin-top:12px"></div>
 </div>
 <div class="card">
-  <h2>Growth of $1</h2>
+  <h2>Growth of $100,000</h2>
   <div class="note">Gold bands mark every stretch either sleeve (SMH or SPHB) was active — the actual calendar, not a summary stat.</div>
   <div class="chartbox"><canvas id="alphaOverlayChart"></canvas></div>
   <div id="alphaOverlayLegend" class="legend"></div>
@@ -2186,6 +2186,17 @@ let fixedincomeverify=parseCSV(EMBEDDED.fixedincomeverify||'');
 let bilSeries=tactical.filter(r=>Number.isFinite(r['BIL Buy Hold'])).map(r=>({Date:r.Date,BIL:r['BIL Buy Hold']}));
 function riskFreeCAGR(s,e){if(!bilSeries.length)return 0;let sd=new Date(s),ed=new Date(e);let ir=bilSeries.filter(r=>{let d=new Date(r.Date);return d>=sd&&d<=ed});if(ir.length<2)return 0;let y=(new Date(ir.at(-1).Date)-new Date(ir[0].Date))/86400000/365.25;if(!(y>0))return 0;let rat=ir.at(-1).BIL/ir[0].BIL;return rat>0?Math.pow(rat,1/y)-1:0}
 function money(v){return Number.isFinite(v)?'$'+v.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}):''}
+function moYY(dateStr){let dt=new Date(dateStr);return String(dt.getMonth()+1).padStart(2,'0')+'/'+String(dt.getFullYear()).slice(-2)}
+function drawXAxisDates(ctx,d,xAt,h,B){
+  if(!d.length)return;
+  ctx.save();ctx.fillStyle='#334155';ctx.font='11px Arial';ctx.textAlign='center';
+  let nTicks=Math.min(7,d.length);
+  for(let k=0;k<nTicks;k++){
+    let i=Math.round(k*(d.length-1)/(nTicks-1||1));
+    ctx.fillText(moYY(d[i].Date),xAt(i),h-B+18);
+  }
+  ctx.restore();
+}
 function pct(v){return Number.isFinite(v)?(v*100).toFixed(2)+'%':''}
 function ratio(v){return Number.isFinite(v)?v.toFixed(2):''}
 function num(v,d=2){return Number.isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):v||''}
@@ -2263,7 +2274,7 @@ function metric(d,c){
   });
   return out;
 }
-function draw(id,dDaily,c,leg,isDD=false){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(Number.isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(isDD?pct(val):money(val),8,y+4)}c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('VOO')?2.5:2;ctx.beginPath();d.forEach((r,i)=>{let xx=L+(w-L-R)*(d.length===1?0:i/(d.length-1)),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')}
+function draw(id,dDaily,c,leg,isDD=false){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(Number.isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(isDD?pct(val):money(val),8,y+4)}c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('VOO')?2.5:2;ctx.beginPath();d.forEach((r,i)=>{let xx=L+(w-L-R)*(d.length===1?0:i/(d.length-1)),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});drawXAxisDates(ctx,d,i=>L+(w-L-R)*(d.length===1?0:i/(d.length-1)),h,B);let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')}
 function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(Number.isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;let xAt=i=>L+(w-L-R)*(d.length===1?0:i/(d.length-1));
   // gold bands behind the lines, one rect per contiguous active stretch
   ctx.fillStyle='rgba(201,150,44,0.16)';let bandStart=null;
@@ -2271,6 +2282,7 @@ function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily)
   if(bandStart!==null)ctx.fillRect(xAt(bandStart),T,Math.max(xAt(d.length-1)-xAt(bandStart),1.5),h-T-B);
   ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(money(val),8,y+4)}
   c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('Alpha')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!Number.isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
+  drawXAxisDates(ctx,d,xAt,h,B);
   let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>Alpha overlay active</span>'}
 function renderAlphaOverlay(){
   let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + Alpha Overlay'];
