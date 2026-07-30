@@ -1121,132 +1121,190 @@ def build_adjusted_open(comp_raw, comp_adj, comp_open):
     return out
 
 
-def build_smh_overlay(comp_adj, comp_raw, comp_open, sig, pv):
+def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
     """
-    Independent SMH overlay layer, built and validated 2026-07. Runs entirely
-    alongside the base MGK/MGV regime (sig["EffectiveHolding"]) without
-    changing it -- this function only adds a second, optional sleeve.
+    Independent Alpha overlay layer, built and validated 2026-07/2026-08.
+    Runs entirely alongside the base MGK/MGV regime (sig["EffectiveHolding"])
+    without changing it -- this function only adds two independent, optional
+    sleeves on top: SMH (semiconductors) and SPHB (high beta).
 
-    Trigger: 5-day rate of change of the SMH/MGV RAW close ratio.
+    SMH sleeve trigger: 5-day rate of change of the SMH/MGV RAW close ratio.
         Entry:  ROC5 >= +2.0%, sustained for 5 consecutive trading days.
         Exit:   ROC5 <= -2.0%, sustained for 5 consecutive trading days.
-    Allocation: 30% SMH / 70% whichever base asset (MGK or MGV) the
-        regime currently holds, funded from the base holding on entry and
-        returned to it on exit. The overlay's own on/off state has no
-        dependency on the base regime -- a base-regime switch changes
-        which asset the 30% is funded from/returned to, but never
-        triggers an overlay entry or exit by itself.
-    Execution: adjusted open on switch days (same convention as
-        build_tactical_values()), so this stays internally consistent
-        with the rest of the adjusted-close-based NAV chain.
 
-    Validated result (production data, 2026-07): beats the base regime
-    alone on both CAGR and Sharpe in every one of 5yr / 10yr / Jan-2016 /
-    Jan-2021 / 2021-2023-stress windows tested. Tested and rejected as
+    SPHB sleeve trigger: SPHB/MGV RAW close ratio vs its own 50-day EMA.
+        Entry:  ratio >= EMA50*(1+0.3%), sustained for 5 consecutive days.
+        Exit:   ratio <= EMA50*(1-0.3%), sustained for 5 consecutive days.
+
+    Allocation: each sleeve is 40% when active alone. When both sleeves are
+        simultaneously active, their weights are scaled down proportionally
+        so the combined sleeve weight never exceeds 50% (i.e. 40%/40% solo
+        becomes 25%/25% together) -- a deliberate concentration cap, since
+        the two sleeves are correlated (~0.30) and both draw from the same
+        base holding. Funded from whichever base asset (MGK or MGV) the
+        regime currently holds; each sleeve's on/off state is fully
+        independent of the base regime and of the other sleeve -- a base
+        regime switch only changes which asset the sleeves are funded
+        from/returned to, never triggers a sleeve entry or exit itself.
+
+    Execution: adjusted open on any day either sleeve's state changes or the
+        base holding changes (same convention as build_tactical_values()),
+        consistent with the rest of the adjusted-close-based NAV chain.
+
+    Validated result (production data, 2026-07/08, corrected-data re-test
+    after an earlier data-corruption artifact was found and fixed in the
+    ad-hoc research CSVs and traced back through this logic): the combined
+    overlay beats the base regime alone on both CAGR and Sharpe in every
+    one of 5yr / 10yr / Jan-2016 / Jan-2021 / 2021-2023-stress / 2012-2015
+    windows tested. SMH alone (40%) and SPHB alone (40%) were also each
+    individually re-validated on the same battery. Tested and rejected as
     overlay candidates on the same battery: XLI, IYR, XLV, XLU, XLK
-    (mixed/marginal), XLY, XLE. SMH/VOO and SMH/XLE were also tested as
-    alternative trigger ratios and both underperformed SMH/MGV.
+    (mixed/marginal), XLY, XLE, SPLV (either MGK or MGV denominator).
+    SMH/VOO, SMH/XLE, SPHB/MGK were also tested as alternative trigger
+    ratios and underperformed SMH/MGV and SPHB/MGV respectively.
 
-    Outputs Data/SMH_Overlay_Daily_Values.csv and
-    Data/SMH_Overlay_Trade_Ledger.csv. Deliberately NOT merged into
+    Outputs Data/Alpha_Overlay_Daily_Values.csv and
+    Data/Alpha_Overlay_Trade_Ledger.csv. Deliberately NOT merged into
     Portfolio_Daily_Values.csv / Trade_Ledger.csv -- this is presented as
     its own dashboard tab, not as another checkbox in the main comparison.
     """
     import pandas as pd
     import numpy as np
 
-    ENTRY_THRESH = 0.020
-    EXIT_THRESH = -0.020
-    PERSIST_DAYS = 5
-    SMH_WEIGHT = 0.30
+    SMH_ENTRY_THRESH, SMH_EXIT_THRESH, SMH_PERSIST_DAYS = 0.020, -0.020, 5
+    SPHB_ENTRY_THRESH, SPHB_EXIT_THRESH, SPHB_PERSIST_DAYS, SPHB_EMA_WINDOW = 0.003, -0.003, 5, 50
+    SMH_WEIGHT = 0.40
+    SPHB_WEIGHT = 0.40
+    COMBINED_CAP = 0.50
 
-    if "SMH" not in comp_raw.columns or "SMH" not in comp_adj.columns or "SMH" not in comp_open.columns:
-        print("  SMH overlay: SMH not present in composites, skipping.")
-        return None, None
+    needed = ["SMH", "SPHB"]
+    for tk in needed:
+        if tk not in comp_raw.columns or tk not in comp_adj.columns or tk not in comp_open.columns:
+            print(f"  Alpha overlay: {tk} not present in composites, skipping.")
+            return None, None
 
     df = sig[["Date", "EffectiveHolding"]].merge(
-        comp_raw[["Date", "MGV", "SMH"]].rename(columns={"MGV": "MGV_raw", "SMH": "SMH_raw"}),
+        comp_raw[["Date", "MGV", "SMH", "SPHB"]].rename(
+            columns={"MGV": "MGV_raw", "SMH": "SMH_raw", "SPHB": "SPHB_raw"}),
         on="Date", how="inner"
     ).merge(
-        comp_adj[["Date", "MGK", "MGV", "SMH"]].rename(columns={"MGK": "MGK_adj", "MGV": "MGV_adj", "SMH": "SMH_adj"}),
+        comp_adj[["Date", "MGK", "MGV", "SMH", "SPHB"]].rename(
+            columns={"MGK": "MGK_adj", "MGV": "MGV_adj", "SMH": "SMH_adj", "SPHB": "SPHB_adj"}),
         on="Date", how="inner"
     ).merge(
-        comp_open[["Date", "MGK", "MGV", "SMH"]].rename(columns={"MGK": "MGK_open", "MGV": "MGV_open", "SMH": "SMH_open"}),
+        comp_open[["Date", "MGK", "MGV", "SMH", "SPHB"]].rename(
+            columns={"MGK": "MGK_open", "MGV": "MGV_open", "SMH": "SMH_open", "SPHB": "SPHB_open"}),
         on="Date", how="inner"
     ).sort_values("Date").reset_index(drop=True)
 
     n = len(df)
     if n == 0:
-        print("  SMH overlay: no overlapping data, skipping.")
+        print("  Alpha overlay: no overlapping data, skipping.")
         return None, None
 
-    ratio = df["SMH_raw"] / df["MGV_raw"]
-    roc5 = (ratio / ratio.shift(PERSIST_DAYS) - 1.0).values
-
-    overlay_on = np.zeros(n, dtype=bool)
-    on = False
-    streak = 0
+    # --- SMH sleeve: ROC5 of SMH/MGV ---
+    smh_ratio = df["SMH_raw"] / df["MGV_raw"]
+    smh_roc5 = (smh_ratio / smh_ratio.shift(SMH_PERSIST_DAYS) - 1.0).values
+    smh_on = np.zeros(n, dtype=bool)
+    on, streak = False, 0
     for i in range(n):
-        rv = roc5[i]
+        rv = smh_roc5[i]
         if np.isnan(rv):
-            overlay_on[i] = on
+            smh_on[i] = on
             continue
         if not on:
-            streak = streak + 1 if rv >= ENTRY_THRESH else 0
-            if streak >= PERSIST_DAYS:
-                on = True
-                streak = 0
+            streak = streak + 1 if rv >= SMH_ENTRY_THRESH else 0
+            if streak >= SMH_PERSIST_DAYS: on = True; streak = 0
         else:
-            streak = streak + 1 if rv <= EXIT_THRESH else 0
-            if streak >= PERSIST_DAYS:
-                on = False
-                streak = 0
-        overlay_on[i] = on
+            streak = streak + 1 if rv <= SMH_EXIT_THRESH else 0
+            if streak >= SMH_PERSIST_DAYS: on = False; streak = 0
+        smh_on[i] = on
 
-    # T+1: today's confirmed overlay state takes effect the next trading day,
+    # --- SPHB sleeve: SPHB/MGV ratio vs its own 50-day EMA, +-0.3% band ---
+    sphb_ratio = df["SPHB_raw"] / df["MGV_raw"]
+    sphb_ema = sphb_ratio.ewm(span=SPHB_EMA_WINDOW, adjust=False, min_periods=1).mean()
+    sphb_dev = (sphb_ratio / sphb_ema - 1.0).values
+    sphb_on = np.zeros(n, dtype=bool)
+    on, streak = False, 0
+    for i in range(n):
+        pv_ = sphb_dev[i]
+        if np.isnan(pv_):
+            sphb_on[i] = on
+            continue
+        if not on:
+            streak = streak + 1 if pv_ >= SPHB_ENTRY_THRESH else 0
+            if streak >= SPHB_PERSIST_DAYS: on = True; streak = 0
+        else:
+            streak = streak + 1 if pv_ <= SPHB_EXIT_THRESH else 0
+            if streak >= SPHB_PERSIST_DAYS: on = False; streak = 0
+        sphb_on[i] = on
+
+    # T+1: today's confirmed sleeve state takes effect the next trading day,
     # matching the same no-lookahead convention used for the base regime.
-    ov_eff = pd.Series([overlay_on[0]] + list(overlay_on[:-1]))
+    smh_eff = np.concatenate([[smh_on[0]], smh_on[:-1]])
+    sphb_eff = np.concatenate([[sphb_on[0]], sphb_on[:-1]])
+    overlay_active = smh_eff | sphb_eff   # single band flag for the chart, as before
+
+    def weights_for(i):
+        w_smh = SMH_WEIGHT if smh_eff[i] else 0.0
+        w_sphb = SPHB_WEIGHT if sphb_eff[i] else 0.0
+        if smh_eff[i] and sphb_eff[i]:
+            total = w_smh + w_sphb
+            if total > COMBINED_CAP:
+                scale = COMBINED_CAP / total
+                w_smh *= scale
+                w_sphb *= scale
+        return (1.0 - w_smh - w_sphb), w_smh, w_sphb
 
     h0 = df.loc[0, "EffectiveHolding"]
-    ov0 = bool(ov_eff.iloc[0])
-    base_w = (1 - SMH_WEIGHT) if ov0 else 1.0
-    smh_w = SMH_WEIGHT if ov0 else 0.0
-    s_base = base_w / float(df.loc[0, f"{h0}_adj"])
-    s_smh = (smh_w / float(df.loc[0, "SMH_adj"])) if ov0 else 0.0
+    w_base, w_smh, w_sphb = weights_for(0)
+    s_base = w_base / float(df.loc[0, f"{h0}_adj"])
+    s_smh = (w_smh / float(df.loc[0, "SMH_adj"])) if w_smh > 0 else 0.0
+    s_sphb = (w_sphb / float(df.loc[0, "SPHB_adj"])) if w_sphb > 0 else 0.0
 
     vals = [1.0]
     trades = []
+    prev_w = (w_base, w_smh, w_sphb)
     for i in range(1, n):
         prev_base = df.loc[i - 1, "EffectiveHolding"]
         cur_base = df.loc[i, "EffectiveHolding"]
-        prev_ov = bool(ov_eff.iloc[i - 1])
-        cur_ov = bool(ov_eff.iloc[i])
         cur = df.iloc[i]
+        cur_w = weights_for(i)
         base_changed = cur_base != prev_base
-        ov_changed = cur_ov != prev_ov
+        w_changed = cur_w != prev_w
 
-        if not base_changed and not ov_changed:
-            val = s_base * float(cur[f"{cur_base}_adj"]) + (s_smh * float(cur["SMH_adj"]) if cur_ov else 0.0)
+        if not base_changed and not w_changed:
+            val = (s_base * float(cur[f"{cur_base}_adj"])
+                   + s_smh * float(cur["SMH_adj"])
+                   + s_sphb * float(cur["SPHB_adj"]))
         else:
             if base_changed:
                 trades.append({"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "Base regime",
                                 "From": prev_base, "To": cur_base})
-            if ov_changed:
-                trades.append({"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "SMH overlay",
-                                "From": "ON" if prev_ov else "OFF", "To": "ON" if cur_ov else "OFF"})
-            sell_val = s_base * float(cur[f"{prev_base}_open"]) + (s_smh * float(cur["SMH_open"]) if prev_ov else 0.0)
-            base_w = (1 - SMH_WEIGHT) if cur_ov else 1.0
-            smh_w = SMH_WEIGHT if cur_ov else 0.0
+            if smh_eff[i] != smh_eff[i - 1]:
+                trades.append({"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "SMH sleeve",
+                                "From": "ON" if smh_eff[i - 1] else "OFF", "To": "ON" if smh_eff[i] else "OFF"})
+            if sphb_eff[i] != sphb_eff[i - 1]:
+                trades.append({"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "SPHB sleeve",
+                                "From": "ON" if sphb_eff[i - 1] else "OFF", "To": "ON" if sphb_eff[i] else "OFF"})
+            sell_val = (s_base * float(cur[f"{prev_base}_open"])
+                        + s_smh * float(cur["SMH_open"])
+                        + s_sphb * float(cur["SPHB_open"]))
+            w_base, w_smh, w_sphb = cur_w
             new_base_open = float(cur[f"{cur_base}_open"])
-            s_base = base_w * sell_val / new_base_open
-            s_smh = (smh_w * sell_val / float(cur["SMH_open"])) if cur_ov else 0.0
-            val = s_base * float(cur[f"{cur_base}_adj"]) + (s_smh * float(cur["SMH_adj"]) if cur_ov else 0.0)
+            s_base = w_base * sell_val / new_base_open
+            s_smh = (w_smh * sell_val / float(cur["SMH_open"])) if w_smh > 0 else 0.0
+            s_sphb = (w_sphb * sell_val / float(cur["SPHB_open"])) if w_sphb > 0 else 0.0
+            val = (s_base * float(cur[f"{cur_base}_adj"])
+                   + s_smh * float(cur["SMH_adj"])
+                   + s_sphb * float(cur["SPHB_adj"]))
         vals.append(val)
+        prev_w = cur_w
 
     out = pd.DataFrame({
         "Date": df["Date"],
-        "Overlay_Active": overlay_on,
-        "Tactical + SMH Overlay": vals,
+        "Overlay_Active": overlay_active,
+        "Tactical + Alpha Overlay": vals,
     })
     # Rebase VOO Benchmark and Tactical Sleeve from the existing production
     # series (pv) onto this same date range, rather than recomputing them --
@@ -1265,24 +1323,24 @@ def build_smh_overlay(comp_adj, comp_raw, comp_open, sig, pv):
 
     v0 = out["VOO Benchmark"].iloc[0]
     t0 = out["A1V12 Tactical Sleeve"].iloc[0]
-    o0 = out["Tactical + SMH Overlay"].iloc[0]
+    o0 = out["Tactical + Alpha Overlay"].iloc[0]
     out["VOO Benchmark"] = out["VOO Benchmark"] / v0 * 100000
     out["A1V12 Tactical Sleeve"] = out["A1V12 Tactical Sleeve"] / t0 * 100000
-    out["Tactical + SMH Overlay"] = out["Tactical + SMH Overlay"] / o0 * 100000
-    out = out[["Date", "VOO Benchmark", "A1V12 Tactical Sleeve", "Tactical + SMH Overlay", "Overlay_Active"]]
+    out["Tactical + Alpha Overlay"] = out["Tactical + Alpha Overlay"] / o0 * 100000
+    out = out[["Date", "VOO Benchmark", "A1V12 Tactical Sleeve", "Tactical + Alpha Overlay", "Overlay_Active"]]
 
     trades_df = pd.DataFrame(trades, columns=["Date", "Type", "From", "To"])
 
-    out.to_csv(DATA / "SMH_Overlay_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
+    out.to_csv(DATA / "Alpha_Overlay_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     trades_df_write = trades_df.copy()
     if len(trades_df_write):
         trades_df_write["Date"] = pd.to_datetime(trades_df_write["Date"])
         trades_df_write = trades_df_write[trades_df_write["Date"] >= port_start]
         trades_df_write["Date"] = trades_df_write["Date"].dt.strftime("%Y-%m-%d")
-    trades_df_write.to_csv(DATA / "SMH_Overlay_Trade_Ledger.csv", index=False)
+    trades_df_write.to_csv(DATA / "Alpha_Overlay_Trade_Ledger.csv", index=False)
 
-    print(f"  SMH overlay: {len(trades_df)} total events, "
-          f"final NAV ${out['Tactical + SMH Overlay'].iloc[-1]:,.0f} on $100k base")
+    print(f"  Alpha overlay: {len(trades_df)} total events, "
+          f"final NAV ${out['Tactical + Alpha Overlay'].iloc[-1]:,.0f} on $100k base")
 
     return out, trades_df
 
@@ -2000,8 +2058,8 @@ def build_dashboard():
         # yield = sum(last 4 dividends) / current price
         "divhistory":        _dividend_history_json(),
         "assetprices":       _latest_prices_json(),
-        "smhoverlay":        csv_payload("SMH_Overlay_Daily_Values.csv"),
-        "smhoverlaytrades":  csv_payload("SMH_Overlay_Trade_Ledger.csv"),
+        "alphaoverlay":       csv_payload("Alpha_Overlay_Daily_Values.csv"),
+        "alphaoverlaytrades": csv_payload("Alpha_Overlay_Trade_Ledger.csv"),
     }
     _signal_basis_label = _normalise_signal_price_basis(SIGNAL_PRICE_BASIS).title()
     _disclosure_note = (
@@ -2038,26 +2096,26 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 
 <button class="tabbtn" onclick="showTab(event,'allocation')">Allocation</button>
 <button class="tabbtn" onclick="showTab(event,'config')">Config</button>
-<button class="tabbtn" onclick="showTab(event,'smhoverlay')" style="border-color:#C9962C;color:#8A6A1F">SMH Overlay</button>
+<button class="tabbtn" onclick="showTab(event,'alphaoverlay')" style="border-color:#C9962C;color:#8A6A1F">Alpha Overlay</button>
 </div>
 <div class="controls"><b class="note">Period</b><span id="periodButtons"></span><span id="freqPill" class="pill">Display: Daily</span><span class="pill">Metrics use daily rows</span><span class="pill">Drawdown before downsample</span></div>
 <section id="overview" class="tab active"><div class="grid kpis" id="kpiBox"></div><div class="grid grid2"><div class="card"><h2>Primary Comparison</h2><div class="controls"><button onclick="preset('core')">Core</button><button onclick="preset('static')">MWM Static</button><button onclick="preset('tacticalmodels')">Tactical Models</button><button onclick="preset('all')">All</button></div><div id="overviewChecks" class="checks"></div><div class="chartbox"><canvas id="overviewChart"></canvas></div><div id="overviewLegend" class="legend"></div></div><div class="card"><h2>Current State &amp; Latest Trade</h2><div id="stateBox"></div><div id="latestTrade"></div><div id="divYield" style="margin-top:12px"></div></div></div><div class="card"><h2>Sortable Metrics</h2><div class="scroll"><table id="metricsTable"></table></div></div></section>
-<section id="smhoverlay" class="tab">
+<section id="alphaoverlay" class="tab">
 <div class="card" style="border-top:3px solid #C9962C">
-  <h2>SMH Overlay — Does It Earn Its Place?</h2>
-  <div class="note">Same MGK/MGV base regime throughout, completely unaffected by this layer. An independent trigger — the 5-day rate of change of the SMH/MGV raw-close ratio — adds a 30% SMH sleeve on top of whichever asset the base regime already holds. Entry at ROC5 &ge;+2.0%, exit at ROC5 &le;-2.0%, both requiring 5 consecutive trading days to confirm. Validated across 5yr / 10yr / Jan-2016 / Jan-2021 / 2021-2023-stress windows: beats the base regime alone on both CAGR and Sharpe in every one. Six other sectors (XLI, IYR, XLV, XLU, XLY, XLE) and two alternative trigger ratios (SMH/VOO, SMH/XLE) were tested and did not clear this bar.</div>
-  <div class="grid kpis" id="smhKpiBox" style="margin-top:12px"></div>
+  <h2>Alpha Overlay — Does It Earn Its Place?</h2>
+  <div class="note">Same MGK/MGV base regime throughout, completely unaffected by this layer. Two independent triggers add optional sleeves on top of whichever asset the base regime already holds: (1) SMH — 5-day rate of change of the SMH/MGV raw-close ratio, entry at ROC5 &ge;+2.0%, exit at ROC5 &le;-2.0%, 5 consecutive trading days to confirm; (2) SPHB — SPHB/MGV raw-close ratio vs its own 50-day EMA, entry/exit at &plusmn;0.3% band, 5 consecutive trading days to confirm. Each sleeve is 40% when active alone; when both are active simultaneously, weights scale down proportionally so combined sleeve exposure is capped at 50%. Validated across 5yr / 10yr / Jan-2016 / Jan-2021 / 2021-2023-stress / 2012-2015 windows: the combined overlay beats the base regime alone on both CAGR and Sharpe in every one. Six other sectors (XLI, IYR, XLV, XLU, XLY, XLE), SPLV (either denominator), and several alternative trigger ratios (SMH/VOO, SMH/XLE, SPHB/MGK) were tested and did not clear this bar.</div>
+  <div class="grid kpis" id="alphaKpiBox" style="margin-top:12px"></div>
 </div>
 <div class="card">
   <h2>Growth of $1</h2>
-  <div class="note">Gold bands mark every stretch the SMH overlay was active — the actual calendar, not a summary stat.</div>
-  <div class="chartbox"><canvas id="smhOverlayChart"></canvas></div>
-  <div id="smhOverlayLegend" class="legend"></div>
+  <div class="note">Gold bands mark every stretch either sleeve (SMH or SPHB) was active — the actual calendar, not a summary stat.</div>
+  <div class="chartbox"><canvas id="alphaOverlayChart"></canvas></div>
+  <div id="alphaOverlayLegend" class="legend"></div>
 </div>
 <div class="card">
   <h2>Trade Log</h2>
-  <div class="note">Base regime switches (growth &harr; value) and SMH overlay entries/exits, most recent first.</div>
-  <div class="scroll"><table id="smhOverlayTradeTable"></table></div>
+  <div class="note">Base regime switches (growth &harr; value), SMH sleeve entries/exits, and SPHB sleeve entries/exits, most recent first.</div>
+  <div class="scroll"><table id="alphaOverlayTradeTable"></table></div>
 </div>
 </section>
 <section id="tactical" class="tab"><div class="card"><h2>Tactical Sleeve — MGK / MGV Binary (v3.4)</h2><div class="chartbox"><canvas id="tacticalChart"></canvas></div><div id="tacticalLegend" class="legend"></div></div><div class="card"><h2>Tactical Drawdown</h2><div class="chartbox short"><canvas id="tacticalDD"></canvas></div><div id="tacticalDDLegend" class="legend"></div><div class="note">Daily drawdown computed before chart downsampling.</div></div><div class="card"><h2>Tactical Metrics</h2><div class="scroll"><table id="tacticalMetrics"></table></div></div></section>
@@ -2093,7 +2151,7 @@ const colors=['#6d35c4','#15803d','#0057b8','#e11d1d','#17365d','#a16207','#0f76
 const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date','End_Date','Asset','Production_Asset','State','EffectiveHolding','From','To','New_State','Rule','Status','Yahoo_Symbol','Notes','Check','Detail','Model','Static_Model','Tactical_Model','Chart','Series','Frequency','Holding','Through_Date','Period','Is_Partial_Year','Month','Overlay_Active','Type']);
 let sortState={},tableData={},period='3Y',periods=['YTD','1Y','2Y','3Y','5Y','2018','2016','SI'],visible=[];
 function parseCSV(t){if(!t)return[];let L=t.trim().split(/\r?\n/);if(!L[0])return[];let H=L[0].split(',');return L.slice(1).filter(Boolean).map(l=>{let V=[],c='',q=false;for(let i=0;i<l.length;i++){let ch=l[i];if(ch=='"')q=!q;else if(ch==','&&!q){V.push(c);c=''}else c+=ch}V.push(c);let o={};H.forEach((h,i)=>{let v=V[i]??'',n=parseFloat(v);o[h]=(!STR.has(h)&&!isNaN(n)&&v.trim()!=='')?n:v});return o})}
-let tactical=parseCSV(EMBEDDED.tactical),portfolio=parseCSV(EMBEDDED.portfolio),signals=parseCSV(EMBEDDED.signals),trades=parseCSV(EMBEDDED.trades),holdsum=parseCSV(EMBEDDED.holdsum),holdperiods=parseCSV(EMBEDDED.holdperiods),audit=parseCSV(EMBEDDED.dataaudit),prodaudit=parseCSV(EMBEDDED.prodaudit),modelmap=parseCSV(EMBEDDED.modelmap),alloc=parseCSV(EMBEDDED.alloc),backfillaudit=parseCSV(EMBEDDED.backfillaudit),smhOverlay=parseCSV(EMBEDDED.smhoverlay),smhOverlayTrades=parseCSV(EMBEDDED.smhoverlaytrades);
+let tactical=parseCSV(EMBEDDED.tactical),portfolio=parseCSV(EMBEDDED.portfolio),signals=parseCSV(EMBEDDED.signals),trades=parseCSV(EMBEDDED.trades),holdsum=parseCSV(EMBEDDED.holdsum),holdperiods=parseCSV(EMBEDDED.holdperiods),audit=parseCSV(EMBEDDED.dataaudit),prodaudit=parseCSV(EMBEDDED.prodaudit),modelmap=parseCSV(EMBEDDED.modelmap),alloc=parseCSV(EMBEDDED.alloc),backfillaudit=parseCSV(EMBEDDED.backfillaudit),alphaOverlay=parseCSV(EMBEDDED.alphaoverlay),alphaOverlayTrades=parseCSV(EMBEDDED.alphaoverlaytrades);
 let divsummary=parseCSV(EMBEDDED.divsummary||''),divannual=parseCSV(EMBEDDED.divannual||''),divasset=parseCSV(EMBEDDED.divasset||''),divperiods=parseCSV(EMBEDDED.divperiods||''),divhistory=(()=>{try{return JSON.parse(EMBEDDED.divhistory||'[]')}catch(e){return []}})();
 const assetprices=(()=>{try{return JSON.parse(EMBEDDED.assetprices||'{}')}catch(e){return {}}})()
 // trailingYield(asset): sum of last 4 dividend payments / current price
@@ -2195,22 +2253,22 @@ function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily)
   for(let i=0;i<d.length;i++){let active=String(d[i][activeCol])==='True';if(active&&bandStart===null)bandStart=i;if(!active&&bandStart!==null){ctx.fillRect(xAt(bandStart),T,Math.max(xAt(i-1)-xAt(bandStart),1.5),h-T-B);bandStart=null}}
   if(bandStart!==null)ctx.fillRect(xAt(bandStart),T,Math.max(xAt(d.length-1)-xAt(bandStart),1.5),h-T-B);
   ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(money(val),8,y+4)}
-  c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('SMH')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!Number.isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
-  let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>SMH overlay active</span>'}
-function renderSMHOverlay(){
-  let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + SMH Overlay'];
-  let d=cut(smhOverlay);
+  c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('Alpha')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!Number.isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
+  let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>Alpha overlay active</span>'}
+function renderAlphaOverlay(){
+  let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + Alpha Overlay'];
+  let d=cut(alphaOverlay);
   try{
-    drawOverlayChart('smhOverlayChart',d,cols3,'smhOverlayLegend','Overlay_Active');
-  }catch(e){console.error('SMH overlay chart failed:',e);}
+    drawOverlayChart('alphaOverlayChart',d,cols3,'alphaOverlayLegend','Overlay_Active');
+  }catch(e){console.error('Alpha overlay chart failed:',e);}
   try{
     let m=metric(d,cols3);
-    document.getElementById('smhKpiBox').innerHTML=m.map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span> | Sharpe ${(r['Sharpe (vs BIL)']!=null&&Number.isFinite(r['Sharpe (vs BIL)']))?r['Sharpe (vs BIL)'].toFixed(2):'N/A'} | Max DD <span class=bad>${pct(r['Max Drawdown'])}</span></div></div>`).join('');
-  }catch(e){console.error('SMH overlay KPI cards failed:',e);}
+    document.getElementById('alphaKpiBox').innerHTML=m.map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span> | Sharpe ${(r['Sharpe (vs BIL)']!=null&&Number.isFinite(r['Sharpe (vs BIL)']))?r['Sharpe (vs BIL)'].toFixed(2):'N/A'} | Max DD <span class=bad>${pct(r['Max Drawdown'])}</span></div></div>`).join('');
+  }catch(e){console.error('Alpha overlay KPI cards failed:',e);}
   try{
-    let merged=[...trades.map(t=>({Date:t.Trade_Date,Type:'Base regime',From:t.From,To:t.To})),...smhOverlayTrades].sort((a,b)=>(b.Date||'').localeCompare(a.Date||''));
-    drawTable('smhOverlayTradeTable',merged.slice(0,300));
-  }catch(e){console.error('SMH overlay trade table failed:',e);let el=document.getElementById('smhOverlayTradeTable');if(el)el.innerHTML='<tr><td class=note>Trade log failed to render — check console</td></tr>';}
+    let merged=[...trades.map(t=>({Date:t.Trade_Date,Type:'Base regime',From:t.From,To:t.To})),...alphaOverlayTrades].sort((a,b)=>(b.Date||'').localeCompare(a.Date||''));
+    drawTable('alphaOverlayTradeTable',merged.slice(0,300));
+  }catch(e){console.error('Alpha overlay trade table failed:',e);let el=document.getElementById('alphaOverlayTradeTable');if(el)el.innerHTML='<tr><td class=note>Trade log failed to render — check console</td></tr>';}
 }
 function dailyDrawdown(d,c){let z=d.map(r=>({Date:r.Date}));c.forEach(x=>{let p=null;z.forEach((o,i)=>{let v=d[i][x];if(!Number.isFinite(v)){o[x]=null;return}p=Math.max(p||v,v);o[x]=v/p-1})});return z}
 function chartAuditRows(name,dDaily,cols,drawdown=false){let basis=drawdown?dailyDrawdown(dDaily,cols):dDaily;let freq=displayFrequency(dDaily),disp=sampleDisplay(basis),rows=[];cols.forEach(x=>{let vals=basis.map(r=>r[x]).filter(isFinite),latestDaily=basis.length?basis.at(-1)[x]:null,latestPlot=disp.length?disp.at(-1)[x]:null;let miss=basis.length-vals.length;rows.push({Chart:name,Series:x,Frequency:freq,'Daily Rows':basis.length,'Plotted Rows':disp.length,'Missing Count':miss,'Latest Daily Date':basis.length?basis.at(-1).Date:'','Latest Plot Date':disp.length?disp.at(-1).Date:'','Latest Point Diff':(Number.isFinite(latestDaily)&&Number.isFinite(latestPlot))?latestPlot-latestDaily:null,Status:(miss===0&&(!Number.isFinite(latestDaily)||Math.abs((latestPlot||0)-latestDaily)<1e-8))?'PASS':'WARN'})});return rows}
@@ -2224,9 +2282,9 @@ function showTab(e,id){
   setTimeout(render,80);
   setTimeout(renderAllocation,80);
   setTimeout(renderDividend,80);
-  setTimeout(renderSMHOverlay,80);
+  setTimeout(renderAlphaOverlay,80);
 }
-function setPeriod(p){period=p;sortState={};document.querySelectorAll('#periodButtons button').forEach(b=>b.classList.toggle('active',b.textContent==p));render()}
+function setPeriod(p){period=p;sortState={};document.querySelectorAll('#periodButtons button').forEach(b=>b.classList.toggle('active',b.textContent==p));render();renderAlphaOverlay()}
 function preset(p){let all=cols(portfolio);visible=p=='core'?['A1V12 Tactical Sleeve','VOO Benchmark']:p=='static'?staticCols():p=='tacticalmodels'?tacticalModelCols():all;document.getElementById('overviewChecks').innerHTML=all.map(x=>`<label><input type=checkbox ${visible.includes(x)?'checked':''} onchange="tog('${x}',this.checked)"> ${x}</label>`).join('');render()}
 function tog(x,on){if(on&&!visible.includes(x))visible.push(x);if(!on)visible=visible.filter(y=>y!=x);render()}
 function recentSignals(){return [...signals].reverse().slice(0,60).map((r,i)=>({...r,__current:i==0}))}
@@ -2346,10 +2404,10 @@ function init(){
   setTimeout(render,120);
   setTimeout(renderAllocation,120);
   setTimeout(renderDividend,120);
-  setTimeout(renderSMHOverlay,120);
+  setTimeout(renderAlphaOverlay,120);
   setTimeout(updateDivYield,150);
 }
-window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation();renderDividend();renderSMHOverlay();updateDivYield()},120));
+window.addEventListener('resize',()=>setTimeout(()=>{render();renderAllocation();renderDividend();renderAlphaOverlay();updateDivYield()},120));
 init();
 </script></body></html>"""
 
@@ -2368,7 +2426,7 @@ def main():
 
     alloc_df = read_allocations()
     static_models, tactical_models = build_model_configs(alloc_df)
-    required_assets = set(alloc_df["Production_Asset"].unique()) | {"MGK","MGV","VOO","BIL","SMH"}
+    required_assets = set(alloc_df["Production_Asset"].unique()) | {"MGK","MGV","VOO","BIL","SMH","SPHB"}
 
     adj_wide, raw_wide, open_wide, div_wide, data_audit_df = download_prices(required_assets)
 
@@ -2399,7 +2457,7 @@ def main():
     sig, trades          = build_signals(comp_adj, comp_raw, SIGNAL_PRICE_BASIS)
     tv                   = build_tactical_values(comp_adj, comp_open_adj, sig)
     pv, portfolio_ledger = build_portfolios(comp_adj, tv, static_models, tactical_models)
-    build_smh_overlay(comp_adj, comp_raw, comp_open_adj, sig, pv)
+    build_alpha_overlay(comp_adj, comp_raw, comp_open_adj, sig, pv)
     build_holding_analytics(sig, comp_raw)
     try:
         build_dividend_analytics(comp_raw, comp_open, div_comp, sig, tv,
