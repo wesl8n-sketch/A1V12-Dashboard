@@ -14,10 +14,10 @@ Open-price execution,PASS,Trade-day return split at open price; fallback to prio
 Allocation assets resolve to live data,PASS,All Production_Assets have OK price data
 Adjusted composite rows,PASS,12590
 Raw composite rows,PASS,12590
-Signal rows,PASS,4678
+Signal rows,PASS,4679
 Trade ledger rows,PASS,92
 Portfolio values rows,PASS,3913
-Latest signal date,PASS,2026-07-29 00:00:00
+Latest signal date,PASS,2026-07-30 00:00:00
 Latest portfolio date,PASS,2026-07-29 00:00:00
 Portfolio rebalancing,PASS,Annual (first trading day of each year) for multi-asset models; continuous blend for single-asset models
 Backfill scaling,PASS,Ratio-scaled to first live observation
