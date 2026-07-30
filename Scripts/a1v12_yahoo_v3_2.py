@@ -1331,6 +1331,19 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
     out["Date"] = pd.to_datetime(out["Date"])
     out = out.merge(pv_local, on="Date", how="left")
 
+    # pv occasionally lacks a trading day that the raw price composites do
+    # have (observed: isolated single-day gaps), which left VOO Benchmark /
+    # A1V12 Tactical Sleeve blank on those specific dates after the merge
+    # above, even though Tactical + Alpha Overlay (computed independently of
+    # pv) stayed populated. Forward-fill rather than leave a hole -- a
+    # missing pv update for one day is not a missing portfolio value.
+    _missing_before = out["VOO Benchmark"].isna().sum()
+    out["VOO Benchmark"] = out["VOO Benchmark"].ffill()
+    out["A1V12 Tactical Sleeve"] = out["A1V12 Tactical Sleeve"].ffill()
+    if _missing_before:
+        print(f"  Alpha overlay: forward-filled {_missing_before} date(s) where pv lacked "
+              f"VOO Benchmark/A1V12 Tactical Sleeve data present elsewhere in the range.")
+
     # Truncate to the portfolio start date BEFORE computing rebase anchors --
     # sig/comp_* run further back (to EMA warm-up start) than pv does, so
     # taking .iloc[0] before truncating grabs a pre-pv, NaN-VOO row and
