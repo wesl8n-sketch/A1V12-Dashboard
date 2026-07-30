@@ -1,16 +1,10 @@
 Date,Type,From,To
-2011-01-06,Base regime,MGK,MGV
-2011-01-12,Base regime,MGV,MGK
-2011-01-25,Base regime,MGK,MGV
-2011-03-16,SMH sleeve,ON,OFF
-2011-04-25,Base regime,MGV,MGK
-2011-04-28,SMH sleeve,OFF,ON
-2011-04-29,Base regime,MGK,MGV
 2011-05-10,Base regime,MGV,MGK
 2011-06-14,Base regime,MGK,MGV
 2011-06-27,Base regime,MGV,MGK
 2011-07-08,SPHB sleeve,OFF,ON
 2011-08-08,SPHB sleeve,ON,OFF
+2011-09-16,SMH sleeve,OFF,ON
 2011-10-06,SMH sleeve,ON,OFF
 2011-11-03,SPHB sleeve,OFF,ON
 2011-11-28,SPHB sleeve,ON,OFF
