@@ -2286,7 +2286,8 @@ function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily)
   let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>Alpha overlay active</span>'}
 function renderAlphaOverlay(){
   let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + Alpha Overlay'];
-  let d=cut(alphaOverlay);
+  let dCut=cut(alphaOverlay);
+  let d=rebase(dCut,cols3).map((r,i)=>({...r,Overlay_Active:dCut[i]?dCut[i].Overlay_Active:false}));
   try{
     drawOverlayChart('alphaOverlayChart',d,cols3,'alphaOverlayLegend','Overlay_Active');
   }catch(e){console.error('Alpha overlay chart failed:',e);}
