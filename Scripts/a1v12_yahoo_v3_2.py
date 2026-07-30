@@ -1197,6 +1197,23 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
         on="Date", how="inner"
     ).sort_values("Date").reset_index(drop=True)
 
+    # SPHB (and, less commonly, SMH) may not be covered by the backfill
+    # workbook the way MGK/MGV are, so Yahoo's own history for them can
+    # start later than sig's full date range. A NaN in any of these columns
+    # would otherwise poison s_smh/s_sphb permanently from that row onward
+    # (nothing in the loop below ever resets a NaN share count), silently
+    # blanking the entire output column rather than just the early rows.
+    # Truncate to the first date where every required column has real data.
+    _required_cols = ["MGV_raw", "SMH_raw", "SPHB_raw", "MGK_adj", "MGV_adj", "SMH_adj", "SPHB_adj",
+                       "MGK_open", "MGV_open", "SMH_open", "SPHB_open"]
+    _before = len(df)
+    df = df.dropna(subset=_required_cols).reset_index(drop=True)
+    _dropped = _before - len(df)
+    if _dropped:
+        print(f"  Alpha overlay: dropped {_dropped} row(s) missing SMH/SPHB/MGK/MGV data "
+              f"(likely SPHB history starting later than the base regime's range); "
+              f"effective range now starts {df['Date'].min().date() if len(df) else 'N/A'}.")
+
     n = len(df)
     if n == 0:
         print("  Alpha overlay: no overlapping data, skipping.")
