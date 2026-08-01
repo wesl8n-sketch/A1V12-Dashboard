@@ -1321,6 +1321,8 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
     out = pd.DataFrame({
         "Date": df["Date"],
         "Overlay_Active": overlay_active,
+        "SMH_Active": smh_eff,
+        "SPHB_Active": sphb_eff,
         "Tactical + Alpha Overlay": vals,
     })
     # Rebase VOO Benchmark and Tactical Sleeve from the existing production
@@ -1357,7 +1359,7 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
     out["VOO Benchmark"] = out["VOO Benchmark"] / v0 * 100000
     out["A1V12 Tactical Sleeve"] = out["A1V12 Tactical Sleeve"] / t0 * 100000
     out["Tactical + Alpha Overlay"] = out["Tactical + Alpha Overlay"] / o0 * 100000
-    out = out[["Date", "VOO Benchmark", "A1V12 Tactical Sleeve", "Tactical + Alpha Overlay", "Overlay_Active"]]
+    out = out[["Date", "VOO Benchmark", "A1V12 Tactical Sleeve", "Tactical + Alpha Overlay", "Overlay_Active", "SMH_Active", "SPHB_Active"]]
 
     trades_df = pd.DataFrame(trades, columns=["Date", "Type", "From", "To"])
 
@@ -2126,7 +2128,7 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 
 <button class="tabbtn" onclick="showTab(event,'allocation')">Allocation</button>
 <button class="tabbtn" onclick="showTab(event,'config')">Config</button>
-<button class="tabbtn" onclick="showTab(event,'alphaoverlay')" style="border-color:#C9962C;color:#8A6A1F">Alpha Overlay</button>
+<button id="alphaOverlayTabBtn" class="tabbtn" onclick="showTab(event,'alphaoverlay')" style="border-color:#C9962C;color:#8A6A1F">Alpha Overlay</button>
 </div>
 <div class="controls"><b class="note">Period</b><span id="periodButtons"></span><span id="freqPill" class="pill">Display: Daily</span><span class="pill">Metrics use daily rows</span><span class="pill">Drawdown before downsample</span></div>
 <section id="overview" class="tab active"><div class="grid kpis" id="kpiBox"></div><div class="grid grid2"><div class="card"><h2>Primary Comparison</h2><div class="controls"><button onclick="preset('core')">Core</button><button onclick="preset('static')">MWM Static</button><button onclick="preset('tacticalmodels')">Tactical Models</button><button onclick="preset('all')">All</button></div><div id="overviewChecks" class="checks"></div><div class="chartbox"><canvas id="overviewChart"></canvas></div><div id="overviewLegend" class="legend"></div></div><div class="card"><h2>Current State &amp; Latest Trade</h2><div id="stateBox"></div><div id="latestTrade"></div><div id="divYield" style="margin-top:12px"></div></div></div><div class="card"><h2>Sortable Metrics</h2><div class="scroll"><table id="metricsTable"></table></div></div></section>
@@ -2178,7 +2180,7 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 </div><script>
 const EMBEDDED=__PAYLOAD__;
 const colors=['#6d35c4','#15803d','#0057b8','#e11d1d','#17365d','#a16207','#0f766e','#1d4ed8','#be123c','#7c3aed','#2563eb','#ea580c'];
-const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date','End_Date','Asset','Production_Asset','State','EffectiveHolding','From','To','New_State','Rule','Status','Yahoo_Symbol','Notes','Check','Detail','Model','Static_Model','Tactical_Model','Chart','Series','Frequency','Holding','Through_Date','Period','Is_Partial_Year','Month','Overlay_Active','Type']);
+const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date','End_Date','Asset','Production_Asset','State','EffectiveHolding','From','To','New_State','Rule','Status','Yahoo_Symbol','Notes','Check','Detail','Model','Static_Model','Tactical_Model','Chart','Series','Frequency','Holding','Through_Date','Period','Is_Partial_Year','Month','Overlay_Active','SMH_Active','SPHB_Active','Type']);
 let sortState={},tableData={},period='3Y',periods=['YTD','1Y','2Y','3Y','5Y','2018','2016','SI'],visible=[];
 function parseCSV(t){if(!t)return[];let L=t.trim().split(/\r?\n/);if(!L[0])return[];let H=L[0].split(',');return L.slice(1).filter(Boolean).map(l=>{let V=[],c='',q=false;for(let i=0;i<l.length;i++){let ch=l[i];if(ch=='"')q=!q;else if(ch==','&&!q){V.push(c);c=''}else c+=ch}V.push(c);let o={};H.forEach((h,i)=>{let v=V[i]??'',n=parseFloat(v);o[h]=(!STR.has(h)&&!isNaN(n)&&v.trim()!=='')?n:v});return o})}
 let tactical=parseCSV(EMBEDDED.tactical),portfolio=parseCSV(EMBEDDED.portfolio),signals=parseCSV(EMBEDDED.signals),trades=parseCSV(EMBEDDED.trades),holdsum=parseCSV(EMBEDDED.holdsum),holdperiods=parseCSV(EMBEDDED.holdperiods),audit=parseCSV(EMBEDDED.dataaudit),prodaudit=parseCSV(EMBEDDED.prodaudit),modelmap=parseCSV(EMBEDDED.modelmap),alloc=parseCSV(EMBEDDED.alloc),backfillaudit=parseCSV(EMBEDDED.backfillaudit),alphaOverlay=parseCSV(EMBEDDED.alphaoverlay),alphaOverlayTrades=parseCSV(EMBEDDED.alphaoverlaytrades);
@@ -2288,21 +2290,31 @@ function metric(d,c){
   return out;
 }
 function draw(id,dDaily,c,leg,isDD=false){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(Number.isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(isDD?pct(val):money(val),8,y+4)}c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('VOO')?2.5:2;ctx.beginPath();d.forEach((r,i)=>{let xx=L+(w-L-R)*(d.length===1?0:i/(d.length-1)),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});drawXAxisDates(ctx,d,i=>L+(w-L-R)*(d.length===1?0:i/(d.length-1)),h,B);let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')}
-function drawOverlayChart(id,dDaily,c,leg,activeCol){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(Number.isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;let xAt=i=>L+(w-L-R)*(d.length===1?0:i/(d.length-1));
-  // gold bands behind the lines, one rect per contiguous active stretch
-  ctx.fillStyle='rgba(201,150,44,0.16)';let bandStart=null;
-  for(let i=0;i<d.length;i++){let active=String(d[i][activeCol])==='True';if(active&&bandStart===null)bandStart=i;if(!active&&bandStart!==null){ctx.fillRect(xAt(bandStart),T,Math.max(xAt(i-1)-xAt(bandStart),1.5),h-T-B);bandStart=null}}
-  if(bandStart!==null)ctx.fillRect(xAt(bandStart),T,Math.max(xAt(d.length-1)-xAt(bandStart),1.5),h-T-B);
+function drawOverlayChart(id,dDaily,c,leg,smhCol,sphbCol){let d=sampleDisplay(dDaily);let cv=document.getElementById(id);if(!cv)return;let box=cv.parentElement,wCss=Math.max(700,box.clientWidth||900),hCss=Math.max(260,box.clientHeight||430),pr=window.devicePixelRatio||1;cv.width=wCss*pr;cv.height=hCss*pr;let ctx=cv.getContext('2d');ctx.setTransform(pr,0,0,pr,0,0);let w=wCss,h=hCss;ctx.clearRect(0,0,w,h);ctx.font='11px Arial';if(!d.length||!c.length){ctx.fillText('No chart data',30,40);return}let vals=[];c.forEach(x=>d.forEach(r=>{if(Number.isFinite(r[x]))vals.push(r[x])}));if(!vals.length){ctx.fillText('No numeric series selected',30,40);return}let mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;let L=90,R=30,T=25,B=55;let xAt=i=>L+(w-L-R)*(d.length===1?0:i/(d.length-1));
+  // three-color bands behind the lines: light blue = SMH only, light green = SPHB only, gold = both simultaneously
+  const bandColor={both:'rgba(201,150,44,0.16)',smh:'rgba(96,165,250,0.18)',sphb:'rgba(134,239,172,0.22)'};
+  const stateAt=i=>{let smh=String(d[i][smhCol])==='True',sphb=String(d[i][sphbCol])==='True';if(smh&&sphb)return'both';if(smh)return'smh';if(sphb)return'sphb';return null};
+  let prevState=null,bandStart=0;
+  for(let i=0;i<=d.length;i++){let s=i<d.length?stateAt(i):null;if(s!==prevState){if(prevState!==null){ctx.fillStyle=bandColor[prevState];ctx.fillRect(xAt(bandStart),T,Math.max(xAt(i-1)-xAt(bandStart),1.5),h-T-B)}bandStart=i;prevState=s}}
   ctx.strokeStyle='#d7deea';ctx.fillStyle='#334155';for(let i=0;i<5;i++){let y=T+(h-T-B)*i/4;ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(w-R,y);ctx.stroke();let val=mx-(mx-mn)*i/4;ctx.fillText(money(val),8,y+4)}
   c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('Alpha')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!Number.isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
   drawXAxisDates(ctx,d,xAt,h,B);
-  let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>Alpha overlay active</span>'}
+  let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(96,165,250,0.45)"></i>SMH active</span>'+'<span><i class=sw style="background:rgba(134,239,172,0.55)"></i>SPHB active</span>'+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>Both active</span>'}
 function renderAlphaOverlay(){
+  try{
+    let btn=document.getElementById('alphaOverlayTabBtn');
+    if(btn&&alphaOverlay.length){
+      let last=alphaOverlay[alphaOverlay.length-1];
+      let currentlyActive=String(last.SMH_Active)==='True'||String(last.SPHB_Active)==='True';
+      if(currentlyActive){btn.style.borderColor='#15803d';btn.style.color='#15803d';btn.style.background='#ecfdf5'}
+      else{btn.style.borderColor='#C9962C';btn.style.color='#8A6A1F';btn.style.background=''}
+    }
+  }catch(e){console.error('Alpha overlay tab indicator failed:',e);}
   let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + Alpha Overlay'];
   let dCut=cut(alphaOverlay);
-  let d=rebase(dCut,cols3).map((r,i)=>({...r,Overlay_Active:dCut[i]?dCut[i].Overlay_Active:false}));
+  let d=rebase(dCut,cols3).map((r,i)=>({...r,SMH_Active:dCut[i]?dCut[i].SMH_Active:false,SPHB_Active:dCut[i]?dCut[i].SPHB_Active:false}));
   try{
-    drawOverlayChart('alphaOverlayChart',d,cols3,'alphaOverlayLegend','Overlay_Active');
+    drawOverlayChart('alphaOverlayChart',d,cols3,'alphaOverlayLegend','SMH_Active','SPHB_Active');
   }catch(e){console.error('Alpha overlay chart failed:',e);}
   try{
     let m=metric(d,cols3);
