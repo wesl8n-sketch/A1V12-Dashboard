@@ -16,9 +16,9 @@ Adjusted composite rows,PASS,12593
 Raw composite rows,PASS,12593
 Signal rows,PASS,4682
 Trade ledger rows,PASS,92
-Portfolio values rows,PASS,3916
+Portfolio values rows,PASS,3917
 Latest signal date,PASS,2026-08-04 00:00:00
-Latest portfolio date,PASS,2026-08-03 00:00:00
+Latest portfolio date,PASS,2026-08-04 00:00:00
 Portfolio rebalancing,PASS,Annual (first trading day of each year) for multi-asset models; continuous blend for single-asset models
 Backfill scaling,PASS,Ratio-scaled to first live observation
 Chart downsampling,PASS,"Daily <=2Y, Weekly >2Y, Monthly >=8Y/SI"
