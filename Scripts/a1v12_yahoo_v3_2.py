@@ -1506,7 +1506,12 @@ def build_tactical_values(comp_adj, comp_open, sig):
             tv["Date"] = pd.to_datetime(tv["Date"])
             tv = tv.sort_values("Date").reset_index(drop=True)
 
-    # Sanity-check last row
+    # Sanity-check last row: a single model showing an implausible >20%
+    # single-day move (e.g. a mutual fund posting its official NAV late,
+    # after this pipeline already ran) should not hold back every other
+    # column's real, current data for that date. Freeze just the affected
+    # column(s) at the prior day's value; leave the date and every other
+    # column's fresh value intact.
     tv_numeric = [c for c in tv.columns if c not in ("Date","EffectiveHolding")]
     if len(tv) >= 3:
         last   = tv[tv_numeric].iloc[-1]
@@ -1515,8 +1520,11 @@ def build_tactical_values(comp_adj, comp_open, sig):
         if (change > 0.20).any():
             bad = change[change > 0.20].index.tolist()
             print(f"  WARNING: Tactical last row ({tv['Date'].iloc[-1]}) suspect "
-                  f"returns > 20% in {bad} — dropping last row.")
-            tv = tv.iloc[:-1].reset_index(drop=True)
+                  f"returns > 20% in {bad} — freezing at prior-day value "
+                  f"(date and other columns kept).")
+            last_idx, prev_idx = tv.index[-1], tv.index[-2]
+            for col in bad:
+                tv.loc[last_idx, col] = tv.loc[prev_idx, col]
 
     tv.to_csv(DATA / "Tactical_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     return tv
@@ -1655,8 +1663,12 @@ def build_portfolios(comp_adj, tv, static_models, tactical_models):
             vals["Date"] = pd.to_datetime(vals["Date"]).dt.strftime("%Y-%m-%d")
             vals = vals.sort_values("Date").reset_index(drop=True)
 
-    # ── Sanity-check last row: drop if any model shows a single-day
-    # return > 20% in absolute value (bad Yahoo gap-fill data guard).
+    # ── Sanity-check last row: a single model (often a mutual-fund-heavy
+    # blend whose NAV posts late) showing an implausible >20% single-day
+    # move should not hold back every other model's real, current data for
+    # that date -- that was silently freezing "Latest data" one day behind
+    # even when e.g. VOO Benchmark and A1V12 Tactical Sleeve were fine.
+    # Freeze just the affected column(s) at the prior day's value instead.
     numeric_cols = [c for c in vals.columns if c != "Date"]
     if len(vals) >= 3:
         last   = vals[numeric_cols].iloc[-1]
@@ -1665,8 +1677,11 @@ def build_portfolios(comp_adj, tv, static_models, tactical_models):
         if (change > 0.20).any():
             bad_cols = change[change > 0.20].index.tolist()
             print(f"  WARNING: Last row ({vals['Date'].iloc[-1]}) has suspect "
-                  f"returns > 20% in {bad_cols} — dropping last row.")
-            vals = vals.iloc[:-1].reset_index(drop=True)
+                  f"returns > 20% in {bad_cols} — freezing at prior-day value "
+                  f"(date and other models kept).")
+            last_idx, prev_idx = vals.index[-1], vals.index[-2]
+            for col in bad_cols:
+                vals.loc[last_idx, col] = vals.loc[prev_idx, col]
 
     vals.to_csv(
         DATA / "Portfolio_Daily_Values.csv",
