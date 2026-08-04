@@ -2490,6 +2490,7 @@ init();
 
 
 def main():
+    import pandas as pd
     print("BUILD: A1V12 Yahoo Production v4.0")
     print("Script compiled: 2026-07-15 12:42 UTC")
     print("Workbook-first price sourcing + share-tracking NAV + full 15yr history")
