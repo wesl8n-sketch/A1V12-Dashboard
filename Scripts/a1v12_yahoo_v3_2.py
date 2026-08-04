@@ -758,6 +758,25 @@ def download_prices(required_assets):
     open_wide = merge_frames(open_frames)
     div_wide  = merge_frames(div_frames).fillna(0.0)
 
+    print(f"  [DIAG] adj_wide max date: {pd.to_datetime(adj_wide['Date']).max().date()}, "
+          f"raw_wide max date: {pd.to_datetime(raw_wide['Date']).max().date()}, "
+          f"open_wide max date: {pd.to_datetime(open_wide['Date']).max().date()}")
+    if "MGK" in adj_wide.columns:
+        _nn = adj_wide.loc[adj_wide['MGK'].notna(), 'Date']
+        print(f"  [DIAG] adj_wide MGK non-null through: "
+              f"{pd.to_datetime(_nn).max().date() if len(_nn) else 'NEVER'}")
+    if "VOO" in adj_wide.columns:
+        _nn = adj_wide.loc[adj_wide['VOO'].notna(), 'Date']
+        print(f"  [DIAG] adj_wide VOO non-null through: "
+              f"{pd.to_datetime(_nn).max().date() if len(_nn) else 'NEVER'}")
+    if "MGK" in open_wide.columns:
+        _nn = open_wide.loc[open_wide['MGK'].notna(), 'Date']
+        print(f"  [DIAG] open_wide MGK non-null through: "
+              f"{pd.to_datetime(_nn).max().date() if len(_nn) else 'NEVER'}")
+    if "VOO" in open_wide.columns:
+        _nn = open_wide.loc[open_wide['VOO'].notna(), 'Date']
+        print(f"  [DIAG] open_wide VOO non-null through: "
+              f"{pd.to_datetime(_nn).max().date() if len(_nn) else 'NEVER'}")
     adj_wide.to_csv(DATA / "Price_Master_Wide.csv",           index=False, date_format="%Y-%m-%d")
     adj_wide.melt(id_vars=["Date"], var_name="Asset", value_name="Adj_Close").dropna().to_csv(
         DATA / "Price_Master_Long.csv", index=False, date_format="%Y-%m-%d")
@@ -1406,8 +1425,11 @@ def build_tactical_values(comp_adj, comp_open, sig):
 
     open_px = open_px.rename(columns={c: f"{c}__OPEN" for c in open_px.columns if c != "Date"})
     df = close.merge(open_px, on="Date", how="inner")
+    print(f"  [DIAG][tv] after close+open merge: max date = {df['Date'].max().date()}, rows = {len(df)}")
     df = df.merge(sig[["Date","EffectiveHolding"]], on="Date", how="inner")
+    print(f"  [DIAG][tv] after sig merge: max date = {df['Date'].max().date()}, rows = {len(df)}")
     df = df.dropna(subset=["MGK","MGV","VOO"]).sort_values("Date").reset_index(drop=True)
+    print(f"  [DIAG][tv] after dropna(MGK,MGV,VOO): max date = {df['Date'].max().date()}, rows = {len(df)}")
     df = df[df["Date"] >= pd.to_datetime(PORTFOLIO_START)].reset_index(drop=True)
 
     # Track shares rather than price ratios to ensure NAV continuity
@@ -2498,6 +2520,15 @@ def main():
         audit_name="Backfill_Open_Scale_Audit.csv",
         price_basis="Open")
 
+    print(f"  [DIAG] comp_adj max date: {pd.to_datetime(comp_adj['Date']).max().date()}")
+    print(f"  [DIAG] comp_raw max date: {pd.to_datetime(comp_raw['Date']).max().date()}")
+    print(f"  [DIAG] comp_open max date: {pd.to_datetime(comp_open['Date']).max().date()}")
+    for _t in ("MGK", "MGV", "VOO"):
+        if _t in comp_open.columns:
+            _nn = comp_open.loc[comp_open[_t].notna(), "Date"]
+            print(f"  [DIAG] comp_open {_t} non-null through: "
+                  f"{pd.to_datetime(_nn).max().date() if len(_nn) else 'NEVER'}")
+
     # Adjusted-open series for tactical execution (fixes the 2026-07
     # raw/adjusted mixing bug in build_tactical_values() -- see that
     # function's docstring and build_adjusted_open()'s docstring for
@@ -2506,12 +2537,21 @@ def main():
     # raw prices for actual cash-flow reporting -- this fix is scoped
     # to tactical NAV execution only.
     comp_open_adj = build_adjusted_open(comp_raw, comp_adj, comp_open)
+    print(f"  [DIAG] comp_open_adj max date: {pd.to_datetime(comp_open_adj['Date']).max().date()}")
+    for _t in ("MGK", "MGV", "VOO"):
+        if _t in comp_open_adj.columns:
+            _nn = comp_open_adj.loc[comp_open_adj[_t].notna(), "Date"]
+            print(f"  [DIAG] comp_open_adj {_t} non-null through: "
+                  f"{pd.to_datetime(_nn).max().date() if len(_nn) else 'NEVER'}")
 
     div_comp = build_dividend_composites(div_wide, raw_scale, required_assets)
 
     sig, trades          = build_signals(comp_adj, comp_raw, SIGNAL_PRICE_BASIS)
+    print(f"  [DIAG] sig max date: {pd.to_datetime(sig['Date']).max().date()}")
     tv                   = build_tactical_values(comp_adj, comp_open_adj, sig)
+    print(f"  [DIAG] tv (Tactical_Daily_Values) max date: {pd.to_datetime(tv['Date']).max().date()}")
     pv, portfolio_ledger = build_portfolios(comp_adj, tv, static_models, tactical_models)
+    print(f"  [DIAG] pv (Portfolio_Daily_Values) max date: {pd.to_datetime(pv['Date']).max().date()}")
     build_alpha_overlay(comp_adj, comp_raw, comp_open_adj, sig, pv)
     build_holding_analytics(sig, comp_raw)
     try:
