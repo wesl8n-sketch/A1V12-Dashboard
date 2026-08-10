@@ -1242,11 +1242,13 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
     smh_ratio = df["SMH_raw"] / df["MGV_raw"]
     smh_roc5 = (smh_ratio / smh_ratio.shift(SMH_PERSIST_DAYS) - 1.0).values
     smh_on = np.zeros(n, dtype=bool)
+    smh_streak_arr = np.zeros(n, dtype=int)
     on, streak = False, 0
     for i in range(n):
         rv = smh_roc5[i]
         if np.isnan(rv):
             smh_on[i] = on
+            smh_streak_arr[i] = streak
             continue
         if not on:
             streak = streak + 1 if rv >= SMH_ENTRY_THRESH else 0
@@ -1255,17 +1257,20 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
             streak = streak + 1 if rv <= SMH_EXIT_THRESH else 0
             if streak >= SMH_PERSIST_DAYS: on = False; streak = 0
         smh_on[i] = on
+        smh_streak_arr[i] = streak
 
     # --- SPHB sleeve: SPHB/MGV ratio vs its own 50-day EMA, +-0.3% band ---
     sphb_ratio = df["SPHB_raw"] / df["MGV_raw"]
     sphb_ema = sphb_ratio.ewm(span=SPHB_EMA_WINDOW, adjust=False, min_periods=1).mean()
     sphb_dev = (sphb_ratio / sphb_ema - 1.0).values
     sphb_on = np.zeros(n, dtype=bool)
+    sphb_streak_arr = np.zeros(n, dtype=int)
     on, streak = False, 0
     for i in range(n):
         pv_ = sphb_dev[i]
         if np.isnan(pv_):
             sphb_on[i] = on
+            sphb_streak_arr[i] = streak
             continue
         if not on:
             streak = streak + 1 if pv_ >= SPHB_ENTRY_THRESH else 0
@@ -1274,6 +1279,7 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
             streak = streak + 1 if pv_ <= SPHB_EXIT_THRESH else 0
             if streak >= SPHB_PERSIST_DAYS: on = False; streak = 0
         sphb_on[i] = on
+        sphb_streak_arr[i] = streak
 
     # T+1: today's confirmed sleeve state takes effect the next trading day,
     # matching the same no-lookahead convention used for the base regime.
@@ -1343,6 +1349,16 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
         "SMH_Active": smh_eff,
         "SPHB_Active": sphb_eff,
         "Tactical + Alpha Overlay": vals,
+        # Raw trigger readouts for the Live Trigger Status panel -- these are
+        # the *unconfirmed* on/off state (smh_on/sphb_on, not the T+1 effective
+        # smh_eff/sphb_eff) since the panel is meant to show "where does today's
+        # read stand", not what's currently funded. Streak counts the number of
+        # consecutive qualifying days toward the *next* transition (entry streak
+        # while off, exit streak while on), reset to 0 the day a transition fires.
+        "SMH_ROC5": smh_roc5,
+        "SMH_Streak": smh_streak_arr,
+        "SPHB_Dev": sphb_dev,
+        "SPHB_Streak": sphb_streak_arr,
     })
     # Rebase VOO Benchmark and Tactical Sleeve from the existing production
     # series (pv) onto this same date range, rather than recomputing them --
@@ -1378,7 +1394,8 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
     out["VOO Benchmark"] = out["VOO Benchmark"] / v0 * 100000
     out["A1V12 Tactical Sleeve"] = out["A1V12 Tactical Sleeve"] / t0 * 100000
     out["Tactical + Alpha Overlay"] = out["Tactical + Alpha Overlay"] / o0 * 100000
-    out = out[["Date", "VOO Benchmark", "A1V12 Tactical Sleeve", "Tactical + Alpha Overlay", "Overlay_Active", "SMH_Active", "SPHB_Active"]]
+    out = out[["Date", "VOO Benchmark", "A1V12 Tactical Sleeve", "Tactical + Alpha Overlay", "Overlay_Active",
+               "SMH_Active", "SPHB_Active", "SMH_ROC5", "SMH_Streak", "SPHB_Dev", "SPHB_Streak"]]
 
     trades_df = pd.DataFrame(trades, columns=["Date", "Type", "From", "To"])
 
