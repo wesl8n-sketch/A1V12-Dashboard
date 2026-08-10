@@ -2193,6 +2193,11 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
   <div class="grid kpis" id="alphaKpiBox" style="margin-top:12px"></div>
 </div>
 <div class="card">
+  <h2>Live Trigger Status</h2>
+  <div class="note">Where today's raw signal stands, independent of whether the sleeve is currently funded (SMH_Active/SPHB_Active above reflect yesterday's confirmed state, T+1). Streak counts consecutive qualifying days toward the next entry (if off) or exit (if on); resets to 0 the day a transition fires.</div>
+  <div class="tradebox" id="alphaTriggerBox" style="margin-top:12px"></div>
+</div>
+<div class="card">
   <h2>Growth of $100,000</h2>
   <div class="note">Gold bands mark every stretch either sleeve (SMH or SPHB) was active — the actual calendar, not a summary stat.</div>
   <div class="chartbox"><canvas id="alphaOverlayChart"></canvas></div>
@@ -2354,6 +2359,33 @@ function drawOverlayChart(id,dDaily,c,leg,smhCol,sphbCol){let d=sampleDisplay(dD
   c.forEach((x,j)=>{ctx.strokeStyle=colors[j%colors.length];ctx.lineWidth=x.includes('Alpha')?2.6:x.includes('VOO')?1.6:2;ctx.beginPath();let started=false;d.forEach((r,i)=>{if(!Number.isFinite(r[x])){started=false;return}let xx=xAt(i),yy=T+(h-T-B)*(1-(r[x]-mn)/(mx-mn));if(started){ctx.lineTo(xx,yy)}else{ctx.moveTo(xx,yy);started=true}});ctx.stroke()});
   drawXAxisDates(ctx,d,xAt,h,B);
   let el=document.getElementById(leg);if(el)el.innerHTML=c.map((x,j)=>`<span><i class=sw style="background:${colors[j%colors.length]}"></i>${x}</span>`).join('')+'<span><i class=sw style="background:rgba(96,165,250,0.45)"></i>SMH active</span>'+'<span><i class=sw style="background:rgba(134,239,172,0.55)"></i>SPHB active</span>'+'<span><i class=sw style="background:rgba(201,150,44,0.5)"></i>Both active</span>'}
+function renderAlphaTriggerStatus(){
+  let el=document.getElementById('alphaTriggerBox');
+  if(!el)return;
+  try{
+    if(!alphaOverlay.length){el.innerHTML='<div class=note>No data</div>';return}
+    let last=alphaOverlay[alphaOverlay.length-1];
+    let SMH_PERSIST=5, SPHB_PERSIST=5;
+    function pctStr(v){return Number.isFinite(v)?(v>=0?'+':'')+(v*100).toFixed(2)+'%':'N/A'}
+    function panel(label,rawOn,val,valLabel,streak,persist,entryThr,exitThr){
+      let target=rawOn?'EXIT':'ENTRY';
+      let thrStr=rawOn?('&le;'+(exitThr*100).toFixed(1)+'%'):('&ge;'+(entryThr*100).toFixed(1)+'%');
+      let barPct=Math.max(0,Math.min(100,(streak/persist)*100));
+      let barColor=rawOn?'#b91c1c':'#15803d';
+      return `<div class=tradeitem>
+        <div class=label>${label} &mdash; Currently ${rawOn?'<span class=bad>ON</span>':'<span class=note>OFF</span>'}</div>
+        <div class=big>${valLabel}: ${pctStr(val)}</div>
+        <div class=note>Streak toward ${target} (${thrStr}): <b>${streak} / ${persist}</b> days</div>
+        <div style="background:#eef2f7;border-radius:6px;height:8px;margin-top:6px;overflow:hidden">
+          <div style="background:${barColor};height:100%;width:${barPct}%"></div>
+        </div>
+      </div>`;
+    }
+    let smhHtml=panel('SMH sleeve', String(last.SMH_Active)==='True', last.SMH_ROC5, 'ROC5', last.SMH_Streak||0, SMH_PERSIST, 0.02, -0.02);
+    let sphbHtml=panel('SPHB sleeve', String(last.SPHB_Active)==='True', last.SPHB_Dev, 'Dev from EMA50', last.SPHB_Streak||0, SPHB_PERSIST, 0.003, -0.003);
+    el.innerHTML=`<div class=note style="grid-column:1/-1;margin-bottom:4px">As of ${last.Date}</div>`+smhHtml+sphbHtml;
+  }catch(e){console.error('Alpha trigger status failed:',e);el.innerHTML='<div class=note>Trigger status failed to render — check console</div>';}
+}
 function renderAlphaOverlay(){
   try{
     let btn=document.getElementById('alphaOverlayTabBtn');
@@ -2364,6 +2396,7 @@ function renderAlphaOverlay(){
       else{btn.style.borderColor='#C9962C';btn.style.color='#8A6A1F';btn.style.background=''}
     }
   }catch(e){console.error('Alpha overlay tab indicator failed:',e);}
+  renderAlphaTriggerStatus();
   let cols3=['VOO Benchmark','A1V12 Tactical Sleeve','Tactical + Alpha Overlay'];
   let dCut=cut(alphaOverlay);
   let d=rebase(dCut,cols3).map((r,i)=>({...r,SMH_Active:dCut[i]?dCut[i].SMH_Active:false,SPHB_Active:dCut[i]?dCut[i].SPHB_Active:false}));
