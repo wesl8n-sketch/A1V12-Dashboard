@@ -2405,7 +2405,7 @@ function renderAlphaTriggerStatus(){
         // contradiction. Show the completed event on its own line instead,
         // and make clear the next streak starts from zero.
         bar=`<div class="pill" style="background:#fef3c7;border-color:#fbbf24;color:#92400e;margin-top:6px">
-              ${rawOn?'Entry':'Exit'} confirmed ${asOfDate} (${streak}/${persist} qualifying days) &mdash; funds go ${rawOn?'ON':'to base regime'} next trading day
+              ${rawOn?'ON':'OFF'} Trigger confirmed ${asOfDate} (${streak}/${persist} qualifying days) &mdash; Trade effective next trading day
              </div>
              <div class=note style="margin-top:6px">Streak toward next ${target}: <b>0 / ${persist}</b> days (resets after a transition)</div>`;
       } else {
