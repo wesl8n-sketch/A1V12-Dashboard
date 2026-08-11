@@ -2438,7 +2438,11 @@ function renderAlphaOverlay(){
     let btn=document.getElementById('alphaOverlayTabBtn');
     if(btn&&alphaOverlay.length){
       let last=alphaOverlay[alphaOverlay.length-1];
-      let currentlyActive=String(last.SMH_Active)==='True'||String(last.SPHB_Active)==='True';
+      // Color reflects the raw trigger (today's confirmed signal), not the
+      // T+1 funded state -- so the badge flips on the trigger date itself.
+      // SMH_Active/SPHB_Active (funded state) and all downstream valuation/
+      // trade-log logic are untouched.
+      let currentlyActive=String(last.SMH_RawOn)==='True'||String(last.SPHB_RawOn)==='True';
       if(currentlyActive){btn.style.borderColor='#15803d';btn.style.color='#15803d';btn.style.background='#ecfdf5'}
       else{btn.style.borderColor='#C9962C';btn.style.color='#8A6A1F';btn.style.background=''}
     }
