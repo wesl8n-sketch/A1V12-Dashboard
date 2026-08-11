@@ -1318,6 +1318,10 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
     vals = [1.0]
     trades = []
     prev_w = (w_base, w_smh, w_sphb)
+    # Track each sleeve's current holding period (entry index/price) so exit
+    # events can report Days_Held / Entry_Price / Exit_Price / Return.
+    smh_entry = {"idx": 0, "price": float(df.loc[0, "SMH_open"])} if smh_eff[0] else None
+    sphb_entry = {"idx": 0, "price": float(df.loc[0, "SPHB_open"])} if sphb_eff[0] else None
     for i in range(1, n):
         prev_base = df.loc[i - 1, "EffectiveHolding"]
         cur_base = df.loc[i, "EffectiveHolding"]
@@ -1333,13 +1337,38 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
         else:
             if base_changed:
                 trades.append({"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "Base regime",
-                                "From": prev_base, "To": cur_base})
+                                "From": prev_base, "To": cur_base,
+                                "Days_Held": None, "Entry_Price": None, "Exit_Price": None, "Return": None})
             if smh_eff[i] != smh_eff[i - 1]:
-                trades.append({"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "SMH sleeve",
-                                "From": "ON" if smh_eff[i - 1] else "OFF", "To": "ON" if smh_eff[i] else "OFF"})
+                row = {"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "SMH sleeve",
+                       "From": "ON" if smh_eff[i - 1] else "OFF", "To": "ON" if smh_eff[i] else "OFF",
+                       "Days_Held": None, "Entry_Price": None, "Exit_Price": None, "Return": None}
+                if smh_eff[i]:  # turning ON: open a new holding period
+                    smh_entry = {"idx": i, "price": float(cur["SMH_open"])}
+                    row["Entry_Price"] = smh_entry["price"]
+                elif smh_entry is not None:  # turning OFF: close out the period
+                    exit_price = float(cur["SMH_open"])
+                    row["Days_Held"] = i - smh_entry["idx"]
+                    row["Entry_Price"] = smh_entry["price"]
+                    row["Exit_Price"] = exit_price
+                    row["Return"] = exit_price / smh_entry["price"] - 1 if smh_entry["price"] else None
+                    smh_entry = None
+                trades.append(row)
             if sphb_eff[i] != sphb_eff[i - 1]:
-                trades.append({"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "SPHB sleeve",
-                                "From": "ON" if sphb_eff[i - 1] else "OFF", "To": "ON" if sphb_eff[i] else "OFF"})
+                row = {"Date": cur["Date"].strftime("%Y-%m-%d"), "Type": "SPHB sleeve",
+                       "From": "ON" if sphb_eff[i - 1] else "OFF", "To": "ON" if sphb_eff[i] else "OFF",
+                       "Days_Held": None, "Entry_Price": None, "Exit_Price": None, "Return": None}
+                if sphb_eff[i]:  # turning ON: open a new holding period
+                    sphb_entry = {"idx": i, "price": float(cur["SPHB_open"])}
+                    row["Entry_Price"] = sphb_entry["price"]
+                elif sphb_entry is not None:  # turning OFF: close out the period
+                    exit_price = float(cur["SPHB_open"])
+                    row["Days_Held"] = i - sphb_entry["idx"]
+                    row["Entry_Price"] = sphb_entry["price"]
+                    row["Exit_Price"] = exit_price
+                    row["Return"] = exit_price / sphb_entry["price"] - 1 if sphb_entry["price"] else None
+                    sphb_entry = None
+                trades.append(row)
             sell_val = (s_base * float(cur[f"{prev_base}_open"])
                         + s_smh * float(cur["SMH_open"])
                         + s_sphb * float(cur["SPHB_open"]))
@@ -1416,7 +1445,8 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
                "SMH_Active", "SPHB_Active", "SMH_ROC5", "SMH_Streak", "SMH_JustTriggered", "SMH_RawOn",
                "SPHB_Dev", "SPHB_Streak", "SPHB_JustTriggered", "SPHB_RawOn"]]
 
-    trades_df = pd.DataFrame(trades, columns=["Date", "Type", "From", "To"])
+    trades_df = pd.DataFrame(trades, columns=["Date", "Type", "From", "To",
+                                               "Days_Held", "Entry_Price", "Exit_Price", "Return"])
 
     out.to_csv(DATA / "Alpha_Overlay_Daily_Values.csv", index=False, date_format="%Y-%m-%d")
     trades_df_write = trades_df.copy()
@@ -2459,7 +2489,7 @@ function renderAlphaOverlay(){
     document.getElementById('alphaKpiBox').innerHTML=m.map(r=>`<div class=kpi><div class=label>${r.Model}</div><div class=big>${money(r['Ending Value'])}</div><div class=note>Total <span class=good>${pct(r['Total Return'])}</span> | CAGR <span class=good>${pct(r.CAGR)}</span> | Sharpe ${(r['Sharpe (vs BIL)']!=null&&Number.isFinite(r['Sharpe (vs BIL)']))?r['Sharpe (vs BIL)'].toFixed(2):'N/A'} | Max DD <span class=bad>${pct(r['Max Drawdown'])}</span></div></div>`).join('');
   }catch(e){console.error('Alpha overlay KPI cards failed:',e);}
   try{
-    let merged=[...trades.map(t=>({Date:t.Trade_Date,Type:'Base regime',From:t.From,To:t.To})),...alphaOverlayTrades].sort((a,b)=>(b.Date||'').localeCompare(a.Date||''));
+    let merged=[...trades.map(t=>({Date:t.Trade_Date,Type:'Base regime',From:t.From,To:t.To,Days_Held:'',Entry_Price:'',Exit_Price:'',Return:''})),...alphaOverlayTrades].sort((a,b)=>(b.Date||'').localeCompare(a.Date||''));
     drawTable('alphaOverlayTradeTable',merged.slice(0,300));
   }catch(e){console.error('Alpha overlay trade table failed:',e);let el=document.getElementById('alphaOverlayTradeTable');if(el)el.innerHTML='<tr><td class=note>Trade log failed to render — check console</td></tr>';}
 }
