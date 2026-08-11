@@ -1360,18 +1360,23 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
         "SMH_Active": smh_eff,
         "SPHB_Active": sphb_eff,
         "Tactical + Alpha Overlay": vals,
-        # Raw trigger readouts for the Live Trigger Status panel -- these are
-        # the *unconfirmed* on/off state (smh_on/sphb_on, not the T+1 effective
-        # smh_eff/sphb_eff) since the panel is meant to show "where does today's
-        # read stand", not what's currently funded. Streak counts the number of
-        # consecutive qualifying days toward the *next* transition (entry streak
-        # while off, exit streak while on), reset to 0 the day a transition fires.
+        # Raw trigger readouts for the Live Trigger Status panel.
+        # SMH_Active/SPHB_Active (above) are the T+1 *funded* state -- what's
+        # actually held today, based on yesterday's confirmed read.
+        # SMH_RawOn/SPHB_RawOn are today's raw signal state (smh_on/sphb_on,
+        # pre-shift) -- this becomes tomorrow's funded state. On an ordinary
+        # day these two agree. On a day a transition fires, they diverge by
+        # construction (that's *what a transition is*), and the panel should
+        # show that divergence explicitly rather than blend them into one
+        # "on/off" flag, which is what caused the entered/exited mislabel.
         "SMH_ROC5": smh_roc5,
         "SMH_Streak": smh_streak_arr,
         "SMH_JustTriggered": smh_just_triggered,
+        "SMH_RawOn": smh_on,
         "SPHB_Dev": sphb_dev,
         "SPHB_Streak": sphb_streak_arr,
         "SPHB_JustTriggered": sphb_just_triggered,
+        "SPHB_RawOn": sphb_on,
     })
     # Rebase VOO Benchmark and Tactical Sleeve from the existing production
     # series (pv) onto this same date range, rather than recomputing them --
@@ -1408,8 +1413,8 @@ def build_alpha_overlay(comp_adj, comp_raw, comp_open, sig, pv):
     out["A1V12 Tactical Sleeve"] = out["A1V12 Tactical Sleeve"] / t0 * 100000
     out["Tactical + Alpha Overlay"] = out["Tactical + Alpha Overlay"] / o0 * 100000
     out = out[["Date", "VOO Benchmark", "A1V12 Tactical Sleeve", "Tactical + Alpha Overlay", "Overlay_Active",
-               "SMH_Active", "SPHB_Active", "SMH_ROC5", "SMH_Streak", "SMH_JustTriggered",
-               "SPHB_Dev", "SPHB_Streak", "SPHB_JustTriggered"]]
+               "SMH_Active", "SPHB_Active", "SMH_ROC5", "SMH_Streak", "SMH_JustTriggered", "SMH_RawOn",
+               "SPHB_Dev", "SPHB_Streak", "SPHB_JustTriggered", "SPHB_RawOn"]]
 
     trades_df = pd.DataFrame(trades, columns=["Date", "Type", "From", "To"])
 
@@ -2253,7 +2258,7 @@ body{font-family:Arial;margin:0;background:#f5f7fb;color:#111827}.wrap{max-width
 </div><script>
 const EMBEDDED=__PAYLOAD__;
 const colors=['#6d35c4','#15803d','#0057b8','#e11d1d','#17365d','#a16207','#0f766e','#1d4ed8','#be123c','#7c3aed','#2563eb','#ea580c'];
-const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date','End_Date','Asset','Production_Asset','State','EffectiveHolding','From','To','New_State','Rule','Status','Yahoo_Symbol','Notes','Check','Detail','Model','Static_Model','Tactical_Model','Chart','Series','Frequency','Holding','Through_Date','Period','Is_Partial_Year','Month','Overlay_Active','SMH_Active','SPHB_Active','SMH_JustTriggered','SPHB_JustTriggered','Type']);
+const STR=new Set(['Date','Trade_Date','Trigger_Date','Start','End','Start_Date','End_Date','Asset','Production_Asset','State','EffectiveHolding','From','To','New_State','Rule','Status','Yahoo_Symbol','Notes','Check','Detail','Model','Static_Model','Tactical_Model','Chart','Series','Frequency','Holding','Through_Date','Period','Is_Partial_Year','Month','Overlay_Active','SMH_Active','SPHB_Active','SMH_JustTriggered','SPHB_JustTriggered','SMH_RawOn','SPHB_RawOn','Type']);
 let sortState={},tableData={},period='3Y',periods=['YTD','1Y','2Y','3Y','5Y','2018','2016','SI'],visible=[];
 function parseCSV(t){if(!t)return[];let L=t.trim().split(/\r?\n/);if(!L[0])return[];let H=L[0].split(',');return L.slice(1).filter(Boolean).map(l=>{let V=[],c='',q=false;for(let i=0;i<l.length;i++){let ch=l[i];if(ch=='"')q=!q;else if(ch==','&&!q){V.push(c);c=''}else c+=ch}V.push(c);let o={};H.forEach((h,i)=>{let v=V[i]??'',n=parseFloat(v);o[h]=(!STR.has(h)&&!isNaN(n)&&v.trim()!=='')?n:v});return o})}
 let tactical=parseCSV(EMBEDDED.tactical),portfolio=parseCSV(EMBEDDED.portfolio),signals=parseCSV(EMBEDDED.signals),trades=parseCSV(EMBEDDED.trades),holdsum=parseCSV(EMBEDDED.holdsum),holdperiods=parseCSV(EMBEDDED.holdperiods),audit=parseCSV(EMBEDDED.dataaudit),prodaudit=parseCSV(EMBEDDED.prodaudit),modelmap=parseCSV(EMBEDDED.modelmap),alloc=parseCSV(EMBEDDED.alloc),backfillaudit=parseCSV(EMBEDDED.backfillaudit),alphaOverlay=parseCSV(EMBEDDED.alphaoverlay),alphaOverlayTrades=parseCSV(EMBEDDED.alphaoverlaytrades);
@@ -2381,33 +2386,50 @@ function renderAlphaTriggerStatus(){
     let last=alphaOverlay[alphaOverlay.length-1];
     let SMH_PERSIST=5, SPHB_PERSIST=5;
     function pctStr(v){return Number.isFinite(v)?(v>=0?'+':'')+(v*100).toFixed(2)+'%':'N/A'}
-    function panel(label,rawOn,val,valLabel,streak,persist,entryThr,exitThr,justTriggered){
+    // fundedOn: what's actually held today (yesterday's confirmed read, T+1 lag).
+    // rawOn: today's raw signal read -- becomes tomorrow's fundedOn. On an
+    // ordinary day fundedOn===rawOn. They only diverge on the day a
+    // transition fires, which is exactly the case worth calling out
+    // explicitly rather than blending into a single on/off flag.
+    function panel(label,fundedOn,rawOn,justTriggered,val,valLabel,streak,persist,entryThr,exitThr){
+      // The threshold/target being worked toward is always about rawOn (today's
+      // live read), never the funded state -- that's true whether or not a
+      // transition just fired.
       let target=rawOn?'EXIT':'ENTRY';
       let thrStr=rawOn?('&le;'+(exitThr*100).toFixed(1)+'%'):('&ge;'+(entryThr*100).toFixed(1)+'%');
-      let barPct=Math.max(0,Math.min(100,(streak/persist)*100));
-      let barColor=rawOn?'#b91c1c':'#15803d';
-      let triggerBanner=justTriggered?`<div class="pill" style="background:#fef3c7;border-color:#fbbf24;color:#92400e;margin-top:6px">Just ${rawOn?'exited':'entered'} today &mdash; takes effect next trading day</div>`:'';
+      let bar='';
+      if(justTriggered){
+        // The streak value on a trigger day is the count that JUST completed
+        // (matching the OLD state's threshold), not progress toward the new
+        // one -- showing it next to the new target's label is what caused the
+        // contradiction. Show the completed event on its own line instead,
+        // and make clear the next streak starts from zero.
+        bar=`<div class="pill" style="background:#fef3c7;border-color:#fbbf24;color:#92400e;margin-top:6px">
+              ${rawOn?'Entry':'Exit'} confirmed today (${streak}/${persist} qualifying days) &mdash; funds go ${rawOn?'ON':'to base regime'} next trading day
+             </div>
+             <div class=note style="margin-top:6px">Streak toward next ${target}: <b>0 / ${persist}</b> days (resets after a transition)</div>`;
+      } else {
+        let barPct=Math.max(0,Math.min(100,(streak/persist)*100));
+        let barColor=rawOn?'#b91c1c':'#15803d';
+        bar=`<div class=note>Streak toward ${target} (${thrStr}): <b>${streak} / ${persist}</b> days</div>
+             <div style="background:#eef2f7;border-radius:6px;height:8px;margin-top:6px;overflow:hidden">
+               <div style="background:${barColor};height:100%;width:${barPct}%"></div>
+             </div>`;
+      }
       return `<div class=tradeitem>
-        <div class=label>${label} &mdash; Currently ${rawOn?'<span class=bad>ON</span>':'<span class=note>OFF</span>'}</div>
+        <div class=label>${label} &mdash; Currently funded: ${fundedOn?'<span class=bad>ON</span>':'<span class=note>OFF</span>'}</div>
         <div class=big>${valLabel}: ${pctStr(val)}</div>
-        <div class=note>Streak toward ${target} (${thrStr}): <b>${streak} / ${persist}</b> days</div>
-        <div style="background:#eef2f7;border-radius:6px;height:8px;margin-top:6px;overflow:hidden">
-          <div style="background:${barColor};height:100%;width:${barPct}%"></div>
-        </div>
-        ${triggerBanner}
+        ${bar}
       </div>`;
     }
+    let smhFundedOn=String(last.SMH_Active)==='True';
+    let smhRawOn=String(last.SMH_RawOn)==='True';
     let smhJust=String(last.SMH_JustTriggered)==='True';
+    let sphbFundedOn=String(last.SPHB_Active)==='True';
+    let sphbRawOn=String(last.SPHB_RawOn)==='True';
     let sphbJust=String(last.SPHB_JustTriggered)==='True';
-    // If a trigger fired today, SMH_Active/SPHB_Active still shows YESTERDAY's
-    // state (T+1 confirmation lag) -- so on a just-triggered day, "rawOn" for
-    // display purposes should reflect the flip that just happened, not the
-    // not-yet-effective confirmed flag, or the streak bar and ON/OFF label
-    // would contradict each other (full bar next to "Currently OFF").
-    let smhRawOn=smhJust?!(String(last.SMH_Active)==='True'):(String(last.SMH_Active)==='True');
-    let sphbRawOn=sphbJust?!(String(last.SPHB_Active)==='True'):(String(last.SPHB_Active)==='True');
-    let smhHtml=panel('SMH sleeve', smhRawOn, last.SMH_ROC5, 'ROC5', last.SMH_Streak||0, SMH_PERSIST, 0.02, -0.02, smhJust);
-    let sphbHtml=panel('SPHB sleeve', sphbRawOn, last.SPHB_Dev, 'Dev from EMA50', last.SPHB_Streak||0, SPHB_PERSIST, 0.003, -0.003, sphbJust);
+    let smhHtml=panel('SMH sleeve', smhFundedOn, smhRawOn, smhJust, last.SMH_ROC5, 'ROC5', last.SMH_Streak||0, SMH_PERSIST, 0.02, -0.02);
+    let sphbHtml=panel('SPHB sleeve', sphbFundedOn, sphbRawOn, sphbJust, last.SPHB_Dev, 'Dev from EMA50', last.SPHB_Streak||0, SPHB_PERSIST, 0.003, -0.003);
     el.innerHTML=`<div class=note style="grid-column:1/-1;margin-bottom:4px">As of ${last.Date}</div>`+smhHtml+sphbHtml;
   }catch(e){console.error('Alpha trigger status failed:',e);el.innerHTML='<div class=note>Trigger status failed to render — check console</div>';}
 }
