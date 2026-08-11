@@ -2391,7 +2391,7 @@ function renderAlphaTriggerStatus(){
     // ordinary day fundedOn===rawOn. They only diverge on the day a
     // transition fires, which is exactly the case worth calling out
     // explicitly rather than blending into a single on/off flag.
-    function panel(label,fundedOn,rawOn,justTriggered,val,valLabel,streak,persist,entryThr,exitThr){
+    function panel(label,fundedOn,rawOn,justTriggered,val,valLabel,streak,persist,entryThr,exitThr,asOfDate){
       // The threshold/target being worked toward is always about rawOn (today's
       // live read), never the funded state -- that's true whether or not a
       // transition just fired.
@@ -2405,7 +2405,7 @@ function renderAlphaTriggerStatus(){
         // contradiction. Show the completed event on its own line instead,
         // and make clear the next streak starts from zero.
         bar=`<div class="pill" style="background:#fef3c7;border-color:#fbbf24;color:#92400e;margin-top:6px">
-              ${rawOn?'Entry':'Exit'} confirmed today (${streak}/${persist} qualifying days) &mdash; funds go ${rawOn?'ON':'to base regime'} next trading day
+              ${rawOn?'Entry':'Exit'} confirmed ${asOfDate} (${streak}/${persist} qualifying days) &mdash; funds go ${rawOn?'ON':'to base regime'} next trading day
              </div>
              <div class=note style="margin-top:6px">Streak toward next ${target}: <b>0 / ${persist}</b> days (resets after a transition)</div>`;
       } else {
@@ -2428,8 +2428,8 @@ function renderAlphaTriggerStatus(){
     let sphbFundedOn=String(last.SPHB_Active)==='True';
     let sphbRawOn=String(last.SPHB_RawOn)==='True';
     let sphbJust=String(last.SPHB_JustTriggered)==='True';
-    let smhHtml=panel('SMH sleeve', smhFundedOn, smhRawOn, smhJust, last.SMH_ROC5, 'ROC5', last.SMH_Streak||0, SMH_PERSIST, 0.02, -0.02);
-    let sphbHtml=panel('SPHB sleeve', sphbFundedOn, sphbRawOn, sphbJust, last.SPHB_Dev, 'Dev from EMA50', last.SPHB_Streak||0, SPHB_PERSIST, 0.003, -0.003);
+    let smhHtml=panel('SMH sleeve', smhFundedOn, smhRawOn, smhJust, last.SMH_ROC5, 'ROC5', last.SMH_Streak||0, SMH_PERSIST, 0.02, -0.02, last.Date);
+    let sphbHtml=panel('SPHB sleeve', sphbFundedOn, sphbRawOn, sphbJust, last.SPHB_Dev, 'Dev from EMA50', last.SPHB_Streak||0, SPHB_PERSIST, 0.003, -0.003, last.Date);
     el.innerHTML=`<div class=note style="grid-column:1/-1;margin-bottom:4px">As of ${last.Date}</div>`+smhHtml+sphbHtml;
   }catch(e){console.error('Alpha trigger status failed:',e);el.innerHTML='<div class=note>Trigger status failed to render — check console</div>';}
 }
