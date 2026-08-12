@@ -1657,6 +1657,12 @@ def build_portfolios(comp_adj, tv, static_models, tactical_models):
             if np.isfinite(px) and px > 0:
                 shares[asset] = BASE_VALUE * weight / px
 
+        # Track each asset's last known good price so a single missing
+        # adjusted-close print (e.g. a mutual fund NAV that hasn't posted
+        # yet) carries forward instead of collapsing that position to $0.
+        last_price = {asset: float(df.loc[0, asset]) for asset in keyed
+                       if np.isfinite(float(df.loc[0, asset]))}
+
         nav = []
         cur_year = pd.Timestamp(df.loc[0, "Date"]).year
 
@@ -1667,22 +1673,29 @@ def build_portfolios(comp_adj, tv, static_models, tactical_models):
                     and dt.year != cur_year):
                 prev_i = i - 1
                 total_value = sum(
-                    sh * float(df.loc[prev_i, asset])
+                    sh * (float(df.loc[prev_i, asset]) if pd.notna(df.loc[prev_i, asset])
+                          else last_price.get(asset, float(df.loc[prev_i, asset])))
                     for asset, sh in shares.items()
-                    if pd.notna(df.loc[prev_i, asset])
                 )
                 new_shares = {}
                 for asset, weight in keyed.items():
                     px = float(df.loc[prev_i, asset])
-                    if np.isfinite(px) and px > 0:
+                    if not np.isfinite(px):
+                        px = last_price.get(asset)
+                    if px is not None and np.isfinite(px) and px > 0:
                         new_shares[asset] = total_value * weight / px
                 shares = new_shares
                 cur_year = dt.year
 
             total = 0.0
             for asset, sh in shares.items():
-                px = float(df.loc[i, asset])
-                value = sh * px if np.isfinite(px) else 0.0
+                raw_px = float(df.loc[i, asset])
+                if np.isfinite(raw_px):
+                    last_price[asset] = raw_px
+                    px = raw_px
+                else:
+                    px = last_price.get(asset)  # forward-fill, not $0
+                value = sh * px if (px is not None and np.isfinite(px)) else 0.0
                 total += value
 
                 # Use the actual security ticker in the dividend ledger so the
