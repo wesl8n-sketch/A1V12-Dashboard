@@ -1,33 +1,33 @@
 Asset,Yahoo_Symbol,Status,First_Date,Last_Date,Rows,Notes
-AVUV,Workbook+Yahoo,OK,1993-03-02,2026-09-18,8450,Workbook history + Yahoo gap-fill to 2026-09-18
-BIL,Workbook+Yahoo,OK,2007-05-30,2026-09-18,4858,Workbook history + Yahoo gap-fill to 2026-09-18
-DFSVX,DFSVX,OK,2008-01-02,2026-09-17,4707,Open+Raw+Adj; 69 div events (hist:69 ded:0)
-DXY,DX-Y.NYB,OK,2008-01-02,2026-09-18,4709,Open+Raw+Adj; 0 div events (hist:0 ded:0)
+AVUV,Workbook+Yahoo,OK,1993-03-02,2026-09-21,8451,Workbook history + Yahoo gap-fill to 2026-09-21
+BIL,Workbook+Yahoo,OK,2007-05-30,2026-09-21,4859,Workbook history + Yahoo gap-fill to 2026-09-21
+DFSVX,DFSVX,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 69 div events (hist:69 ded:0)
+DXY,DX-Y.NYB,OK,2008-01-02,2026-09-21,4710,Open+Raw+Adj; 0 div events (hist:0 ded:0)
 EFV,EFV,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 38 div events (hist:38 ded:0)
 FBTC,FBTC,OK,2024-01-11,2026-09-18,674,Open+Raw+Adj; 0 div events (hist:0 ded:0)
-FGBPX,FGBPX,OK,2008-01-02,2026-09-17,4707,Open+Raw+Adj; 231 div events (hist:0 ded:231)
-FIKQX,FIKQX,OK,2018-10-04,2026-09-17,1998,Open+Raw+Adj; 101 div events (hist:0 ded:101)
-FIWDX,FIWDX,OK,2018-10-04,2026-09-17,1998,Open+Raw+Adj; 109 div events (hist:0 ded:109)
+FGBPX,FGBPX,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 231 div events (hist:0 ded:231)
+FIKQX,FIKQX,OK,2018-10-04,2026-09-18,1999,Open+Raw+Adj; 101 div events (hist:0 ded:101)
+FIWDX,FIWDX,OK,2018-10-04,2026-09-18,1999,Open+Raw+Adj; 109 div events (hist:0 ded:109)
 FRDM,FRDM,OK,2019-06-14,2026-09-18,1826,Open+Raw+Adj; 24 div events (hist:24 ded:0)
-FSRIX,FSRIX,OK,2008-01-02,2026-09-17,4707,Open+Raw+Adj; 252 div events (hist:0 ded:252)
-IMCB,IMCB,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 76 div events (hist:76 ded:0)
+FSRIX,FSRIX,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 252 div events (hist:0 ded:252)
+IMCB,IMCB,OK,2008-01-02,2026-09-21,4709,Open+Raw+Adj; 76 div events (hist:76 ded:0)
 JBND,JBND,OK,2023-10-12,2026-09-18,736,Open+Raw+Adj; 37 div events (hist:0 ded:37)
-JIVE,Workbook+Yahoo,OK,2005-08-05,2026-09-18,5313,Workbook history + Yahoo gap-fill to 2026-09-18
-JMSFX,JMSFX,OK,2014-11-10,2026-09-17,2980,Open+Raw+Adj; 144 div events (hist:144 ded:0)
-JMSIX,JMSIX,OK,2014-11-10,2026-09-17,2980,Open+Raw+Adj; 144 div events (hist:0 ded:144)
+JIVE,Workbook+Yahoo,OK,2005-08-05,2026-09-21,5314,Workbook history + Yahoo gap-fill to 2026-09-21
+JMSFX,JMSFX,OK,2014-11-10,2026-09-18,2981,Open+Raw+Adj; 144 div events (hist:144 ded:0)
+JMSIX,JMSIX,OK,2014-11-10,2026-09-18,2981,Open+Raw+Adj; 144 div events (hist:0 ded:144)
 JPIE,JPIE,OK,2021-11-02,2026-09-18,1224,Open+Raw+Adj; 59 div events (hist:0 ded:59)
-MGK,Workbook+Yahoo,OK,2007-12-21,2026-09-18,4714,Workbook history + Yahoo gap-fill to 2026-09-18
-MGV,Workbook+Yahoo,OK,2007-12-21,2026-09-18,4714,Workbook history + Yahoo gap-fill to 2026-09-18
+MGK,Workbook+Yahoo,OK,2007-12-21,2026-09-21,4715,Workbook history + Yahoo gap-fill to 2026-09-21
+MGV,Workbook+Yahoo,OK,2007-12-21,2026-09-21,4715,Workbook history + Yahoo gap-fill to 2026-09-21
 MTUM,MTUM,OK,2013-04-18,2026-09-18,3376,Open+Raw+Adj; 54 div events (hist:54 ded:0)
-NERYX,NERYX,OK,2008-01-02,2026-09-17,4707,Open+Raw+Adj; 221 div events (hist:221 ded:0)
-PIMIX,PIMIX,OK,2008-01-02,2026-09-17,4707,Open+Raw+Adj; 237 div events (hist:0 ded:237)
+NERYX,NERYX,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 221 div events (hist:221 ded:0)
+PIMIX,PIMIX,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 237 div events (hist:0 ded:237)
 SMH,SMH,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 14 div events (hist:14 ded:0)
 SPHB,SPHB,OK,2011-05-05,2026-09-18,3866,Open+Raw+Adj; 59 div events (hist:59 ded:0)
-VEU,Workbook+Yahoo,OK,2007-03-08,2026-09-18,4914,Workbook history + Yahoo gap-fill to 2026-09-18
-VFINX,VFINX,OK,2008-01-02,2026-09-17,4707,Open+Raw+Adj; 74 div events (hist:74 ded:0)
-VIX,^VIX,OK,2008-01-02,2026-09-18,4710,Open+Raw+Adj; 0 div events (hist:0 ded:0)
-VOO,Workbook+Yahoo,OK,1976-08-31,2026-09-18,12626,Workbook history + Yahoo gap-fill to 2026-09-18
-WOBDX,WOBDX,OK,2008-01-02,2026-09-17,4707,Open+Raw+Adj; 235 div events (hist:0 ded:235)
+VEU,Workbook+Yahoo,OK,2007-03-08,2026-09-21,4915,Workbook history + Yahoo gap-fill to 2026-09-21
+VFINX,VFINX,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 74 div events (hist:74 ded:0)
+VIX,^VIX,OK,2008-01-02,2026-09-21,4711,Open+Raw+Adj; 0 div events (hist:0 ded:0)
+VOO,Workbook+Yahoo,OK,1976-08-31,2026-09-21,12627,Workbook history + Yahoo gap-fill to 2026-09-21
+WOBDX,WOBDX,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 235 div events (hist:0 ded:235)
 XLF,XLF,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 74 div events (hist:74 ded:0)
 XLG,XLG,OK,2008-01-02,2026-09-18,4708,Open+Raw+Adj; 72 div events (hist:72 ded:0)
 XLRE,XLRE,OK,2015-10-08,2026-09-18,2752,Open+Raw+Adj; 43 div events (hist:43 ded:0)
